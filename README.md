@@ -21,6 +21,9 @@ python manage.py run_etl
 python manage.py runserver
 ```
 
+
+Source extraction reads directly from configured MySQL source tables (`MYSQL_SERVER1_*` and `MYSQL_SERVER2_*` in `.env`). CSV files in the repository are reference samples only and are not used by ETL ingestion.
+
 ## Main entry points
 
 - ETL command: `etl.management.commands.run_etl`

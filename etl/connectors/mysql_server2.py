@@ -1,9 +1,34 @@
-import csv
-from pathlib import Path
+from __future__ import annotations
+
+from typing import Any
+
+import pymysql
 from django.conf import settings
 
 
-def extract_table(table: str):
-    path = Path(settings.BASE_DIR) / f"{table}.csv"
-    with path.open(newline="", encoding="utf-8") as handle:
-        return list(csv.DictReader(handle))
+class MySQLExtractionError(RuntimeError):
+    """Raised when source extraction from MySQL fails."""
+
+
+def _connection_params(server_settings: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "host": server_settings["HOST"],
+        "port": int(server_settings["PORT"]),
+        "user": server_settings["USER"],
+        "password": server_settings["PASSWORD"],
+        "database": server_settings["DATABASE"],
+        "cursorclass": pymysql.cursors.DictCursor,
+        "autocommit": True,
+        "charset": "utf8mb4",
+    }
+
+
+def extract_table(table: str) -> list[dict[str, Any]]:
+    """Extract an entire source table from MySQL server 2."""
+    try:
+        with pymysql.connect(**_connection_params(settings.MYSQL_SERVER_2)) as conn:
+            with conn.cursor() as cur:
+                cur.execute(f"SELECT * FROM `{table}`")
+                return list(cur.fetchall())
+    except Exception as exc:
+        raise MySQLExtractionError(f"mysql_server_2 extract failed for table '{table}': {exc}") from exc
