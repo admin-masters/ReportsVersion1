@@ -48,3 +48,5 @@ If you see `The system cannot find the path specified` for activation, verify th
 If you hit `IndexError: list index out of range` during `run_etl`, pull latest code and rerun: this was caused by executing raw SQL with `%...%` patterns using an empty params list in the DB helper.
 
 If you hit `ProgrammingError: INSERT has more expressions than target columns` during `run_etl`, pull latest code and rerun: silver tables are now rebuilt with `CREATE TABLE AS SELECT` each run to keep schema aligned with selected columns.
+
+If you hit `ProgrammingError: column "_dq_status" specified more than once` during `run_etl`, pull latest code and rerun: Silver `CREATE TABLE AS SELECT` statements were updated to avoid duplicating audit columns when using `*` from Bronze tables.

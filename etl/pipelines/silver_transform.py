@@ -73,9 +73,7 @@ def build_silver(run_id: str) -> None:
             webinar_date::text AS webinar_date_dt,
             COALESCE(NULLIF(title,''), id) AS collateral_display_name,
             CASE WHEN COALESCE(file,'')='' AND COALESCE(vimeo_url,'')='' THEN '1' ELSE '0' END AS content_missing_flag,
-            NOW()::text AS _silver_updated_at,
-            'PASS'::text AS _dq_status,
-            NULL::text AS _dq_errors
+            NOW()::text AS _silver_updated_at
         FROM bronze.collateral_management_collateral
         """
     )
@@ -94,9 +92,7 @@ def build_silver(run_id: str) -> None:
             cc.campaign_id AS campaign_id_resolved,
             c.type AS collateral_type,
             c.title AS collateral_title,
-            NOW()::text AS _silver_updated_at,
-            'PASS'::text AS _dq_status,
-            NULL::text AS _dq_errors
+            NOW()::text AS _silver_updated_at
         FROM bronze.collateral_management_campaigncollateral cc
         LEFT JOIN silver.dim_collateral c ON c.id = cc.collateral_id
         """
@@ -140,9 +136,7 @@ def build_silver(run_id: str) -> None:
             COALESCE(t.video_gt_50_at, t.last_viewed_at, t.updated_at)::text AS video_gt_50_event_ts,
             COALESCE(t.viewed_last_page_at, t.updated_at)::text AS pdf_download_event_ts,
             NOW()::text AS _silver_updated_at,
-            '{run_id}'::text AS _as_of_run_id,
-            'PASS'::text AS _dq_status,
-            NULL::text AS _dq_errors
+            '{run_id}'::text AS _as_of_run_id
         FROM bronze.sharing_management_collateraltransaction t
         LEFT JOIN silver.dim_doctor d
           ON regexp_replace(COALESCE(d.phone,''), '[^0-9+]', '', 'g') = regexp_replace(COALESCE(t.doctor_number,''), '[^0-9+]', '', 'g')
