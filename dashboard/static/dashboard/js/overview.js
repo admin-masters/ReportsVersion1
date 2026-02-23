@@ -1,53 +1,77 @@
 (function () {
   const labels = JSON.parse(document.getElementById('trend-labels')?.textContent || '[]');
-  const reached = JSON.parse(document.getElementById('trend-reached')?.textContent || '[]');
   const opened = JSON.parse(document.getElementById('trend-opened')?.textContent || '[]');
-  const consumed = JSON.parse(document.getElementById('trend-consumed')?.textContent || '[]');
-  const health = JSON.parse(document.getElementById('trend-health')?.textContent || '[]');
+  const reached = JSON.parse(document.getElementById('trend-reached')?.textContent || '[]');
+  const pdf = JSON.parse(document.getElementById('trend-pdf')?.textContent || '[]');
+  const video = JSON.parse(document.getElementById('trend-video')?.textContent || '[]');
 
   const canvas = document.getElementById('trend-chart');
   if (!canvas || !labels.length) return;
 
   const ctx = canvas.getContext('2d');
-  const w = canvas.width = canvas.clientWidth * window.devicePixelRatio;
-  const h = canvas.height = 180 * window.devicePixelRatio;
+  const width = canvas.clientWidth;
+  const height = 260;
+  canvas.width = width * window.devicePixelRatio;
+  canvas.height = height * window.devicePixelRatio;
   ctx.scale(window.devicePixelRatio, window.devicePixelRatio);
 
-  const padding = { top: 16, right: 24, bottom: 28, left: 36 };
-  const width = canvas.clientWidth;
-  const height = 180;
-  const all = [...reached, ...opened, ...consumed, ...health, 1];
-  const maxV = Math.max(...all);
+  const margin = { top: 22, right: 18, bottom: 56, left: 46 };
+  const chartW = width - margin.left - margin.right;
+  const chartH = height - margin.top - margin.bottom;
+  const series = [
+    { name: 'Doctors Opened %', values: opened, color: '#18a668' },
+    { name: 'Doctors Reached %', values: reached, color: '#3279db' },
+    { name: 'PDF Downloads %', values: pdf, color: '#7a57d1' },
+    { name: 'Video Viewed (>50%) %', values: video, color: '#f0aa12' },
+  ];
 
-  const drawLine = (series, color) => {
-    if (!series.length) return;
-    ctx.beginPath();
-    series.forEach((v, i) => {
-      const x = padding.left + (i * (width - padding.left - padding.right) / Math.max(labels.length - 1, 1));
-      const y = padding.top + ((maxV - v) * (height - padding.top - padding.bottom) / maxV);
-      i ? ctx.lineTo(x, y) : ctx.moveTo(x, y);
-    });
-    ctx.strokeStyle = color;
-    ctx.lineWidth = 2;
-    ctx.stroke();
-  };
+  const maxVal = Math.max(100, ...series.flatMap(s => s.values), 1);
+  const groupCount = labels.length;
+  const groupWidth = chartW / Math.max(groupCount, 1);
+  const barWidth = Math.min(20, groupWidth / 6);
 
   ctx.clearRect(0, 0, width, height);
-  ctx.strokeStyle = '#d0d8e4';
-  ctx.beginPath();
-  ctx.moveTo(padding.left, height - padding.bottom);
-  ctx.lineTo(width - padding.right, height - padding.bottom);
-  ctx.stroke();
+  ctx.strokeStyle = '#d5dbe5';
+  ctx.lineWidth = 1;
 
-  drawLine(reached, '#2d6cdf');
-  drawLine(opened, '#19a974');
-  drawLine(consumed, '#f59e0b');
-  drawLine(health, '#d9363e');
+  for (let i = 0; i <= 5; i++) {
+    const y = margin.top + (chartH * i / 5);
+    ctx.beginPath();
+    ctx.moveTo(margin.left, y);
+    ctx.lineTo(margin.left + chartW, y);
+    ctx.stroke();
+    ctx.fillStyle = '#6b7280';
+    ctx.font = '11px Arial';
+    const pct = (maxVal - (maxVal * i / 5)).toFixed(0);
+    ctx.fillText(`${pct}`, 10, y + 4);
+  }
 
-  ctx.fillStyle = '#5b677a';
-  ctx.font = '12px Arial';
-  labels.forEach((l, i) => {
-    const x = padding.left + (i * (width - padding.left - padding.right) / Math.max(labels.length - 1, 1));
-    ctx.fillText(l, x - 10, height - 8);
+  labels.forEach((label, idx) => {
+    const xBase = margin.left + (idx * groupWidth) + groupWidth * 0.1;
+
+    series.forEach((s, sIdx) => {
+      const val = s.values[idx] || 0;
+      const h = (val / maxVal) * chartH;
+      const x = xBase + sIdx * (barWidth + 4);
+      const y = margin.top + chartH - h;
+      ctx.fillStyle = s.color;
+      ctx.fillRect(x, y, barWidth, h);
+    });
+
+    ctx.fillStyle = '#374151';
+    ctx.font = '12px Arial';
+    ctx.fillText(label, xBase + barWidth, margin.top + chartH + 18);
+  });
+
+  const legendY = height - 18;
+  let legendX = margin.left;
+  series.forEach((s) => {
+    ctx.fillStyle = s.color;
+    ctx.fillRect(legendX, legendY - 9, 12, 12);
+    legendX += 16;
+    ctx.fillStyle = '#4b5563';
+    ctx.font = '11px Arial';
+    ctx.fillText(s.name, legendX, legendY);
+    legendX += ctx.measureText(s.name).width + 16;
   });
 })();
