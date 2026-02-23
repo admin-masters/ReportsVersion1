@@ -81,6 +81,11 @@ MYSQL_SERVER_1 = {
     "USER": os.getenv("MYSQL_SERVER1_USER", "root"),
     "PASSWORD": os.getenv("MYSQL_SERVER1_PASSWORD", ""),
     "DATABASE": os.getenv("MYSQL_SERVER1_DB", ""),
+    "CONNECT_TIMEOUT": int(os.getenv("MYSQL_SERVER1_CONNECT_TIMEOUT", "10")),
+    "READ_TIMEOUT": int(os.getenv("MYSQL_SERVER1_READ_TIMEOUT", "60")),
+    "WRITE_TIMEOUT": int(os.getenv("MYSQL_SERVER1_WRITE_TIMEOUT", "60")),
+    "SSL_MODE": os.getenv("MYSQL_SERVER1_SSL_MODE", ""),
+    "SSL_CA": os.getenv("MYSQL_SERVER1_SSL_CA", ""),
 }
 
 MYSQL_SERVER_2 = {
@@ -89,6 +94,11 @@ MYSQL_SERVER_2 = {
     "USER": os.getenv("MYSQL_SERVER2_USER", "root"),
     "PASSWORD": os.getenv("MYSQL_SERVER2_PASSWORD", ""),
     "DATABASE": os.getenv("MYSQL_SERVER2_DB", ""),
+    "CONNECT_TIMEOUT": int(os.getenv("MYSQL_SERVER2_CONNECT_TIMEOUT", "10")),
+    "READ_TIMEOUT": int(os.getenv("MYSQL_SERVER2_READ_TIMEOUT", "60")),
+    "WRITE_TIMEOUT": int(os.getenv("MYSQL_SERVER2_WRITE_TIMEOUT", "60")),
+    "SSL_MODE": os.getenv("MYSQL_SERVER2_SSL_MODE", ""),
+    "SSL_CA": os.getenv("MYSQL_SERVER2_SSL_CA", ""),
 }
 
 LANGUAGE_CODE = "en-us"

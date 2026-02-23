@@ -75,6 +75,16 @@ If you hit `DataError: invalid input syntax for type date: "NULL"` in GOLD (`kpi
 Weekly GOLD buckets are now anchored to the latest observed campaign event week (Saturday-ending), not fixed to the current week, so historical campaign activity appears in the dashboard KPIs.
 
 
+If `run_etl` fails with MySQL timeout/access errors (for example `OperationalError(2003)` / `OperationalError(1045)`), verify network access to each MySQL host (security group / firewall / VPC), credentials, and optional SSL settings. The app supports:
+
+- `MYSQL_SERVER1_CONNECT_TIMEOUT`, `MYSQL_SERVER1_READ_TIMEOUT`, `MYSQL_SERVER1_WRITE_TIMEOUT`
+- `MYSQL_SERVER2_CONNECT_TIMEOUT`, `MYSQL_SERVER2_READ_TIMEOUT`, `MYSQL_SERVER2_WRITE_TIMEOUT`
+- `MYSQL_SERVER1_SSL_MODE`, `MYSQL_SERVER1_SSL_CA`
+- `MYSQL_SERVER2_SSL_MODE`, `MYSQL_SERVER2_SSL_CA`
+
+Use SSL mode `required`, `verify_ca`, or `verify_identity` when your managed MySQL/RDS setup enforces TLS.
+
+
 ### Session/Auth note
 
 This project uses signed-cookie sessions (`SESSION_ENGINE=django.contrib.sessions.backends.signed_cookies`) for local campaign login flow, so report auth works without requiring `django_session` table migrations.
