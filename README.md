@@ -52,3 +52,5 @@ If you hit `ProgrammingError: INSERT has more expressions than target columns` d
 If you hit `ProgrammingError: column "_dq_status" specified more than once` during `run_etl`, pull latest code and rerun: Silver `CREATE TABLE AS SELECT` statements were updated to avoid duplicating audit columns when using `*` from Bronze tables.
 
 If you hit `DataError: invalid input syntax for type date: "NULL"` during `run_etl`, pull latest code and rerun: Silver schedule/date parsing now treats literal `NULL`/blank strings as null before casting.
+
+If you hit `DataError: invalid input syntax for type date: "NULL"` in GOLD (`kpi_weekly_summary`), pull latest code and rerun: weekly aggregation now normalizes literal `NULL`/blank timestamp strings before date casts.

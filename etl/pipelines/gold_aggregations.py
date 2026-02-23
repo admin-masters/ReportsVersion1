@@ -118,18 +118,27 @@ def build_gold(run_id: str) -> None:
                                        date_trunc('week', CURRENT_DATE)::date + interval '21 day',
                                        interval '7 day')::date AS week_start_date
             ),
+            fact_normalized AS (
+                SELECT
+                    doctor_identity_key,
+                    CASE WHEN reached_first_ts IS NULL OR btrim(reached_first_ts) = '' OR lower(btrim(reached_first_ts)) = 'null' THEN NULL ELSE reached_first_ts::date END AS reached_first_date,
+                    CASE WHEN opened_first_ts IS NULL OR btrim(opened_first_ts) = '' OR lower(btrim(opened_first_ts)) = 'null' THEN NULL ELSE opened_first_ts::date END AS opened_first_date,
+                    CASE WHEN video_gt_50_first_ts IS NULL OR btrim(video_gt_50_first_ts) = '' OR lower(btrim(video_gt_50_first_ts)) = 'null' THEN NULL ELSE video_gt_50_first_ts::date END AS video_gt_50_first_date,
+                    CASE WHEN pdf_download_first_ts IS NULL OR btrim(pdf_download_first_ts) = '' OR lower(btrim(pdf_download_first_ts)) = 'null' THEN NULL ELSE pdf_download_first_ts::date END AS pdf_download_first_date
+                FROM {schema}.fact_doctor_collateral_latest
+            ),
             agg AS (
                 SELECT
                     w.week_start_date,
                     (w.week_start_date + interval '6 day')::date AS week_end_date,
                     ROW_NUMBER() OVER (ORDER BY w.week_start_date) AS week_index,
-                    COUNT(DISTINCT f.doctor_identity_key) FILTER (WHERE f.reached_first_ts::date BETWEEN w.week_start_date AND (w.week_start_date + interval '6 day')::date) AS doctors_reached_unique,
-                    COUNT(DISTINCT f.doctor_identity_key) FILTER (WHERE f.opened_first_ts::date BETWEEN w.week_start_date AND (w.week_start_date + interval '6 day')::date) AS doctors_opened_unique,
-                    COUNT(DISTINCT f.doctor_identity_key) FILTER (WHERE f.video_gt_50_first_ts::date BETWEEN w.week_start_date AND (w.week_start_date + interval '6 day')::date) AS video_viewed_50_unique,
-                    COUNT(DISTINCT f.doctor_identity_key) FILTER (WHERE f.pdf_download_first_ts::date BETWEEN w.week_start_date AND (w.week_start_date + interval '6 day')::date) AS pdf_download_unique,
-                    COUNT(DISTINCT f.doctor_identity_key) FILTER (WHERE (f.video_gt_50_first_ts::date BETWEEN w.week_start_date AND (w.week_start_date + interval '6 day')::date) OR (f.pdf_download_first_ts::date BETWEEN w.week_start_date AND (w.week_start_date + interval '6 day')::date)) AS doctors_consumed_unique
+                    COUNT(DISTINCT f.doctor_identity_key) FILTER (WHERE f.reached_first_date BETWEEN w.week_start_date AND (w.week_start_date + interval '6 day')::date) AS doctors_reached_unique,
+                    COUNT(DISTINCT f.doctor_identity_key) FILTER (WHERE f.opened_first_date BETWEEN w.week_start_date AND (w.week_start_date + interval '6 day')::date) AS doctors_opened_unique,
+                    COUNT(DISTINCT f.doctor_identity_key) FILTER (WHERE f.video_gt_50_first_date BETWEEN w.week_start_date AND (w.week_start_date + interval '6 day')::date) AS video_viewed_50_unique,
+                    COUNT(DISTINCT f.doctor_identity_key) FILTER (WHERE f.pdf_download_first_date BETWEEN w.week_start_date AND (w.week_start_date + interval '6 day')::date) AS pdf_download_unique,
+                    COUNT(DISTINCT f.doctor_identity_key) FILTER (WHERE (f.video_gt_50_first_date BETWEEN w.week_start_date AND (w.week_start_date + interval '6 day')::date) OR (f.pdf_download_first_date BETWEEN w.week_start_date AND (w.week_start_date + interval '6 day')::date)) AS doctors_consumed_unique
                 FROM weeks w
-                LEFT JOIN {schema}.fact_doctor_collateral_latest f ON TRUE
+                LEFT JOIN fact_normalized f ON TRUE
                 GROUP BY w.week_start_date
             )
             SELECT
