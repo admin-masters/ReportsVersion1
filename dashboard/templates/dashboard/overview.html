@@ -11,9 +11,9 @@
   <main class="dashboard">
     <section id="header" class="card header-card">
       <div class="brand-block">
-        <div class="brand-logo">apex</div>
+        <div class="brand-logo">{{ brand_logo_text }}</div>
         <div>
-          <p class="brand-sub">Cardio Care Awareness Q1 2024</p>
+          <p class="brand-sub">{{ brand_name }}</p>
           <h1>In-Clinic Sharing System</h1>
         </div>
       </div>
@@ -26,21 +26,22 @@
         <p class="schedule">{{ schedule_text }}</p>
         <p class="footnote">Week = 7-day period ending on Saturday</p>
       </div>
-      <button class="download-btn" onclick="window.print()">Download</button>
+      <a class="download-btn" href="/campaign/{{ selected_campaign }}/export/{% if selected_week %}?week={{ selected_week }}{% endif %}" target="_blank">Download</a>
     </section>
 
-    <section id="controls" class="card controls-card">
+    <section class="card controls-card">
       <div>
-        <label for="campaign">Campaign</label>
-        <select id="campaign" onchange="window.location='/campaign/' + this.value + '/'">
-          {% for c in campaigns %}
-            <option value="{{ c.brand_campaign_id }}" {% if c.brand_campaign_id == selected_campaign %}selected{% endif %}>{{ c.brand_campaign_id }}</option>
+        <label for="week-select">Week Filter</label>
+        <select id="week-select" onchange="if(this.value){window.location='?week='+this.value}else{window.location='?'}">
+          <option value="">All Weeks</option>
+          {% for w in week_options %}
+          <option value="{{ w }}" {% if selected_week == w %}selected{% endif %}>Week {{ w }}</option>
           {% endfor %}
         </select>
       </div>
       <div class="meta">
-        <span><strong>Schema:</strong> {{ selected_schema|default:'N/A' }}</span>
-        <span><strong>Campaign ID:</strong> {{ selected_campaign|default:'N/A' }}</span>
+        <span><strong>Campaign:</strong> {{ selected_campaign }}</span>
+        <span><a href="/">← Back to Menu</a></span>
       </div>
     </section>
 
@@ -196,5 +197,6 @@
   {{ pdf_pct_series|json_script:"trend-pdf" }}
   {{ video_pct_series|json_script:"trend-video" }}
   <script src="{% static 'dashboard/js/overview.js' %}"></script>
+  {% if export_mode %}<script>window.addEventListener('load', ()=>window.print());</script>{% endif %}
 </body>
 </html>
