@@ -25,3 +25,14 @@ python manage.py runserver
 
 - ETL command: `etl.management.commands.run_etl`
 - Dashboard page: `/` or `/campaign/<brand_campaign_id>/`
+
+## Quick local bootstrap
+
+1. Update values in `.env` for your local PostgreSQL/MySQL credentials.
+2. Run bootstrap script:
+
+```bash
+./setup_local.sh
+```
+
+The script creates `.venv`, installs dependencies, optionally starts `reports-postgres` Docker container, runs `python manage.py check`, and executes `python manage.py run_etl`.
