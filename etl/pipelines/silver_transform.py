@@ -86,8 +86,18 @@ def build_silver(run_id: str) -> None:
             cc.*,
             cc.start_date::text AS schedule_start_ts,
             cc.end_date::text AS schedule_end_ts,
-            cc.start_date::date AS schedule_start_date,
-            cc.end_date::date AS schedule_end_date,
+            CASE
+                WHEN cc.start_date IS NULL THEN NULL
+                WHEN btrim(cc.start_date) = '' THEN NULL
+                WHEN lower(btrim(cc.start_date)) = 'null' THEN NULL
+                ELSE cc.start_date::date
+            END AS schedule_start_date,
+            CASE
+                WHEN cc.end_date IS NULL THEN NULL
+                WHEN btrim(cc.end_date) = '' THEN NULL
+                WHEN lower(btrim(cc.end_date)) = 'null' THEN NULL
+                ELSE cc.end_date::date
+            END AS schedule_end_date,
             CASE WHEN cc.start_date IS NULL OR cc.end_date IS NULL THEN '1' ELSE '0' END AS schedule_missing_flag,
             cc.campaign_id AS campaign_id_resolved,
             c.type AS collateral_type,
@@ -116,10 +126,10 @@ def build_silver(run_id: str) -> None:
                 WHEN t.video_gt_50_at IS NOT NULL THEN '1'
                 ELSE '0'
             END AS video_view_gt_50_flag,
-            NULLIF(t.last_video_percentage,'')::float AS last_video_percentage_num,
-            NULLIF(t.video_watch_percentage,'')::float AS video_watch_percentage_num,
-            NULLIF(t.pdf_last_page,'')::float AS pdf_last_page_num,
-            NULLIF(t.pdf_total_pages,'')::float AS pdf_total_pages_num,
+            CASE WHEN t.last_video_percentage IS NULL OR btrim(t.last_video_percentage) = '' OR lower(btrim(t.last_video_percentage)) = 'null' THEN NULL ELSE t.last_video_percentage::float END AS last_video_percentage_num,
+            CASE WHEN t.video_watch_percentage IS NULL OR btrim(t.video_watch_percentage) = '' OR lower(btrim(t.video_watch_percentage)) = 'null' THEN NULL ELSE t.video_watch_percentage::float END AS video_watch_percentage_num,
+            CASE WHEN t.pdf_last_page IS NULL OR btrim(t.pdf_last_page) = '' OR lower(btrim(t.pdf_last_page)) = 'null' THEN NULL ELSE t.pdf_last_page::float END AS pdf_last_page_num,
+            CASE WHEN t.pdf_total_pages IS NULL OR btrim(t.pdf_total_pages) = '' OR lower(btrim(t.pdf_total_pages)) = 'null' THEN NULL ELSE t.pdf_total_pages::float END AS pdf_total_pages_num,
             t.created_at::text AS created_at_ts,
             t.updated_at::text AS updated_at_ts,
             t.transaction_date::text AS transaction_date_ts,
