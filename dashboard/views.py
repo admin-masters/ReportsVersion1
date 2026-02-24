@@ -4,6 +4,7 @@ from datetime import datetime
 from typing import Any
 
 from django.db import connection
+from django.db.utils import OperationalError, ProgrammingError
 from django.http import HttpRequest, HttpResponse
 from django.shortcuts import redirect, render
 
@@ -69,19 +70,33 @@ def _campaign_credentials(brand_campaign_id: str) -> dict[str, str]:
 
 
 def _campaign_list() -> list[dict[str, Any]]:
-    return _fetch_dicts(
-        """
-        SELECT
-          r.brand_campaign_id,
-          r.gold_schema_name,
-          COALESCE(MIN(NULLIF(s.collateral_title, '')), 'Campaign ' || r.brand_campaign_id) AS campaign_name
-        FROM gold_global.campaign_registry r
-        LEFT JOIN silver.map_brand_campaign_to_campaign m ON m.brand_campaign_id = r.brand_campaign_id
-        LEFT JOIN silver.bridge_campaign_collateral_schedule s ON s.campaign_id = m.campaign_id_resolved
-        GROUP BY r.brand_campaign_id, r.gold_schema_name
-        ORDER BY r.brand_campaign_id
-        """
-    )
+    """Return campaign list for menu page.
+
+    If ETL/GOLD tables are not created yet (fresh deploy), return an empty list
+    instead of crashing the entire dashboard route.
+    """
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT to_regclass('gold_global.campaign_registry')")
+            registry_exists = cursor.fetchone()[0] is not None
+        if not registry_exists:
+            return []
+
+        return _fetch_dicts(
+            """
+            SELECT
+              r.brand_campaign_id,
+              r.gold_schema_name,
+              COALESCE(MIN(NULLIF(s.collateral_title, '')), 'Campaign ' || r.brand_campaign_id) AS campaign_name
+            FROM gold_global.campaign_registry r
+            LEFT JOIN silver.map_brand_campaign_to_campaign m ON m.brand_campaign_id = r.brand_campaign_id
+            LEFT JOIN silver.bridge_campaign_collateral_schedule s ON s.campaign_id = m.campaign_id_resolved
+            GROUP BY r.brand_campaign_id, r.gold_schema_name
+            ORDER BY r.brand_campaign_id
+            """
+        )
+    except (ProgrammingError, OperationalError):
+        return []
 
 
 def menu_page(request: HttpRequest) -> HttpResponse:
@@ -132,7 +147,6 @@ def _build_report_context(selected_campaign: str, week_filter: int | None = None
         "actions": ["Continue current execution and monitor weekly movement."],
     }
     collateral_cards = {"current": {}, "best": {}, "benchmark": {}}
-
     context_metrics = {
         "campaign_health": 0.0,
         "campaign_wow": 0.0,
@@ -433,3 +447,4 @@ def export_report(request: HttpRequest, brand_campaign_id: str):
     context = _build_report_context(brand_campaign_id, week_filter)
     context["export_mode"] = True
     return render(request, "dashboard/overview.html", context)
+
