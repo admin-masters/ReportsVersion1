@@ -8,7 +8,7 @@ PIP="$VENV_DIR/bin/pip"
 DJANGO_SETTINGS_MODULE=${DJANGO_SETTINGS_MODULE:-config.settings.prod}
 ENV_FILE=${ENV_FILE:-/var/www/secrets/.env}
 RUN_ETL_ON_DEPLOY=${RUN_ETL_ON_DEPLOY:-1}
-RUN_ETL_CONTINUE_ON_ERROR=${RUN_ETL_CONTINUE_ON_ERROR:-0}
+RUN_ETL_CONTINUE_ON_ERROR=${RUN_ETL_CONTINUE_ON_ERROR:-1}
 
 cd "$PROJECT_DIR"
 
@@ -58,7 +58,6 @@ if [ "$RUN_ETL_ON_DEPLOY" = "1" ]; then
 else
   echo "[deploy] Skipping ETL (RUN_ETL_ON_DEPLOY=$RUN_ETL_ON_DEPLOY)"
 fi
-
 
 echo "[deploy] Collecting static files..."
 "$PYTHON" manage.py collectstatic --noinput
