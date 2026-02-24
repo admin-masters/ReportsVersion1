@@ -59,6 +59,7 @@ else
   echo "[deploy] Skipping ETL (RUN_ETL_ON_DEPLOY=$RUN_ETL_ON_DEPLOY)"
 fi
 
+
 echo "[deploy] Collecting static files..."
 "$PYTHON" manage.py collectstatic --noinput
 
