@@ -1,9 +1,9 @@
 from datetime import datetime, timezone
+
 from etl.connectors import mysql_server1, mysql_server2
 from etl.connectors.postgres import execute
 from etl.utils.normalization import hash_identity
-from etl.utils.specs import SOURCE_TABLE_SPECS, AUDIT_COLUMNS
-
+from etl.utils.specs import AUDIT_COLUMNS, SOURCE_TABLE_SPECS
 
 SCHEMA_BY_SERVER = {
     "mysql_server_1": "raw_server1",
@@ -26,18 +26,21 @@ def _extract(server: str, table: str):
     return mysql_server2.extract_table(table)
 
 
-def ingest_raw(run_id: str) -> dict[str, int]:
+def ingest_raw(run_id: str) -> dict[str, object]:
     ensure_raw_tables()
     counts: dict[str, int] = {}
+    table_errors: dict[str, str] = {}
     extracted_at = datetime.now(timezone.utc).isoformat()
+
     for server, tables in SOURCE_TABLE_SPECS.items():
         schema = SCHEMA_BY_SERVER[server]
         for table, columns in tables.items():
+            table_key = f"{schema}.{table}"
             try:
                 rows = _extract(server, table)
             except Exception as exc:
-                counts[f"{schema}.{table}"] = 0
-                counts[f"{schema}.{table}__error"] = str(exc)
+                counts[table_key] = 0
+                table_errors[table_key] = str(exc)
                 continue
 
             inserted = 0
@@ -63,5 +66,10 @@ def ingest_raw(run_id: str) -> dict[str, int]:
                     source_values + metadata,
                 )
                 inserted += 1
-            counts[f"{schema}.{table}"] = inserted
-    return counts
+
+            counts[table_key] = inserted
+
+    return {
+        "counts": counts,
+        "errors": table_errors,
+    }

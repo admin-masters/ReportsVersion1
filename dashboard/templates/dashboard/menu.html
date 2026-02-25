@@ -40,7 +40,31 @@
         Latest ETL Run: <strong>{{ debug_snapshot.latest_run.run_id }}</strong> |
         Status: <strong>{{ debug_snapshot.latest_run.status }}</strong>
       </p>
+      {% if debug_snapshot.latest_run.notes_summary %}
+      <p class="subtext">
+        Source tables: total={{ debug_snapshot.latest_run.notes_summary.total_tables }},
+        loaded={{ debug_snapshot.latest_run.notes_summary.loaded_tables }},
+        failed={{ debug_snapshot.latest_run.notes_summary.failed_tables }},
+        rows={{ debug_snapshot.latest_run.notes_summary.loaded_rows }}
+      </p>
+      {% endif %}
+
+      {% if debug_snapshot.latest_run.notes_errors %}
+      <h4 style="margin-top:12px;">Latest ETL Source Errors (top 20)</h4>
+      <table>
+        <thead><tr><th>Source Table</th><th>Error</th></tr></thead>
+        <tbody>
+          {% for e in debug_snapshot.latest_run.notes_errors %}
+          <tr>
+            <td>{{ e.0 }}</td>
+            <td>{{ e.1 }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      {% else %}
       <p class="subtext">{{ debug_snapshot.latest_run.notes }}</p>
+      {% endif %}
       {% else %}
       <p class="subtext">No ETL run log found yet.</p>
       {% endif %}

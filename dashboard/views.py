@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from datetime import datetime
 from typing import Any
 
@@ -188,12 +189,24 @@ def _build_debug_snapshot() -> dict[str, Any]:
                 )
                 row = cursor.fetchone()
                 if row:
+                    parsed_notes = None
+                    notes_errors = []
+                    notes_value = row[4]
+                    if notes_value:
+                        try:
+                            parsed_notes = json.loads(notes_value)
+                            notes_errors = list((parsed_notes.get("errors") or {}).items())[:20]
+                        except (TypeError, ValueError):
+                            parsed_notes = None
+
                     snapshot["latest_run"] = {
                         "run_id": row[0],
                         "started_at": row[1],
                         "ended_at": row[2],
                         "status": row[3],
-                        "notes": row[4],
+                        "notes": notes_value,
+                        "notes_summary": (parsed_notes or {}).get("summary"),
+                        "notes_errors": notes_errors,
                     }
 
         # Per-campaign GOLD table diagnostics
