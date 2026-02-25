@@ -21,6 +21,7 @@ python manage.py run_etl
 python manage.py runserver
 ```
 
+
 Source extraction reads directly from configured MySQL source tables (`MYSQL_SERVER1_*` and `MYSQL_SERVER2_*` in `.env`). CSV files in the repository are reference samples only and are not used by ETL ingestion.
 
 Settings now auto-load variables from a local `.env` file at startup, so `python manage.py run_etl` uses those credentials even if your shell session has not exported them.
@@ -35,7 +36,6 @@ Settings now auto-load variables from a local `.env` file at startup, so `python
 - **Server 1** (`MYSQL_SERVER1_*`, DB: `healthcare_forms_2`)
   - `campaign_campaignfieldrep`
   - `campaign_campaign`
-
 - **Server 2** (`MYSQL_SERVER2_*`, DB: `myproject_dev`)
   - `campaign_management_campaign`
   - `collateral_management_campaigncollateral`
@@ -74,7 +74,10 @@ If you hit `DataError: invalid input syntax for type date: "NULL"` in GOLD (`kpi
 
 Weekly GOLD buckets are now anchored to the latest observed campaign event week (Saturday-ending), not fixed to the current week, so historical campaign activity appears in the dashboard KPIs.
 
+
 If `run_etl` fails with MySQL timeout/access errors (for example `OperationalError(2003)` / `OperationalError(1045)`), verify network access to each MySQL host (security group / firewall / VPC), credentials, and optional SSL settings. The app supports:
+
+If one source table is temporarily unreachable (for example MySQL `1045` on one server), RAW ingestion now skips only that table and continues the ETL for other sources; skipped-table errors are captured in the ETL run notes.
 
 - `MYSQL_SERVER1_CONNECT_TIMEOUT`, `MYSQL_SERVER1_READ_TIMEOUT`, `MYSQL_SERVER1_WRITE_TIMEOUT`
 - `MYSQL_SERVER2_CONNECT_TIMEOUT`, `MYSQL_SERVER2_READ_TIMEOUT`, `MYSQL_SERVER2_WRITE_TIMEOUT`
@@ -82,6 +85,8 @@ If `run_etl` fails with MySQL timeout/access errors (for example `OperationalErr
 - `MYSQL_SERVER2_SSL_MODE`, `MYSQL_SERVER2_SSL_CA`
 
 Use SSL mode `required`, `verify_ca`, or `verify_identity` when your managed MySQL/RDS setup enforces TLS.
+
+
 
 ### Deployment env file path
 
@@ -99,9 +104,12 @@ The settings loader also accepts common DB env aliases in addition to `POSTGRES_
 
 This project uses signed-cookie sessions (`SESSION_ENGINE=django.contrib.sessions.backends.signed_cookies`) for local campaign login flow, so report auth works without requiring `django_session` table migrations.
 
+
 ### EC2 deployment script (`deploy.sh`)
 
 The repository includes `deploy.sh` for server deployments.
+
+The script now prints a short runtime summary (settings module + resolved DB host/port) before migrations to make pipeline debugging easier from logs.
 
 Key behavior:
 - Uses production settings by default: `DJANGO_SETTINGS_MODULE=config.settings.prod`
@@ -111,11 +119,13 @@ Key behavior:
   3. `<project>/.env`
 - Runs migrations, collects static files, and restarts `gunicorn`.
 - Runs ETL by default (`python manage.py run_etl`) to create/update RAW→GOLD tables required by the dashboard (`gold_global.campaign_registry`).
+- `RUN_ETL_CONTINUE_ON_ERROR` defaults to `1` so deploy does not fail hard when source MySQL credentials/network are temporarily unavailable.
   - Disable with `RUN_ETL_ON_DEPLOY=0`
   - Continue despite ETL failure with `RUN_ETL_CONTINUE_ON_ERROR=1` (not recommended for production)
 
-You can override paths at runtime, for example:
+You can override runtime values, for example:
 
 ```bash
-PROJECT_DIR=/var/www/ReportsVersion1 VENV_DIR=/var/www/venv ENV_FILE=/var/www/secrets/.env ./deploy.sh
+PROJECT_DIR=/var/www/ReportsVersion1 VENV_DIR=/var/www/venv ENV_FILE=/var/www/secrets/.env DJANGO_SETTINGS_MODULE=config.settings.prod RUN_ETL_ON_DEPLOY=1 RUN_ETL_CONTINUE_ON_ERROR=1 GUNICORN_SERVICE=gunicorn ./deploy.sh
 ```
+

@@ -8,6 +8,8 @@ from django.db.utils import OperationalError, ProgrammingError
 from django.http import HttpRequest, HttpResponse
 from django.shortcuts import redirect, render
 
+from etl.utils.specs import SOURCE_TABLE_SPECS
+
 
 def _fetch_dicts(sql: str, params=None):
     with connection.cursor() as cursor:
@@ -99,9 +101,148 @@ def _campaign_list() -> list[dict[str, Any]]:
         return []
 
 
+
+def _table_exists(schema: str, table: str) -> bool:
+    with connection.cursor() as cursor:
+        cursor.execute("SELECT to_regclass(%s)", [f"{schema}.{table}"])
+        return cursor.fetchone()[0] is not None
+
+
+def _table_count(schema: str, table: str) -> int:
+    with connection.cursor() as cursor:
+        cursor.execute(f'SELECT COUNT(*) FROM {schema}.{table}')
+        return int(cursor.fetchone()[0])
+
+
+def _build_debug_snapshot() -> dict[str, Any]:
+    snapshot: dict[str, Any] = {
+        "layers": [],
+        "latest_run": None,
+        "errors": [],
+    }
+
+    try:
+        layer_specs = {
+            "raw_server1": list(SOURCE_TABLE_SPECS.get("mysql_server_1", {}).keys()),
+            "raw_server2": list(SOURCE_TABLE_SPECS.get("mysql_server_2", {}).keys()),
+            "bronze": list(SOURCE_TABLE_SPECS.get("mysql_server_1", {}).keys()) + list(SOURCE_TABLE_SPECS.get("mysql_server_2", {}).keys()),
+            "silver": [
+                "dim_field_rep",
+                "dim_doctor",
+                "dim_collateral",
+                "bridge_campaign_collateral_schedule",
+                "fact_collateral_transaction",
+                "map_brand_campaign_to_campaign",
+                "bridge_brand_campaign_doctor_base",
+                "doctor_action_first_seen",
+            ],
+            "gold_global": [
+                "campaign_registry",
+                "campaign_health_history",
+                "benchmark_last_10_campaigns",
+            ],
+            "control": ["etl_run_log"],
+        }
+
+        for schema, tables in layer_specs.items():
+            schema_rows = []
+            for table in tables:
+                try:
+                    exists = _table_exists(schema, table)
+                    row_count = _table_count(schema, table) if exists else 0
+                    schema_rows.append({
+                        "table": table,
+                        "exists": exists,
+                        "row_count": row_count,
+                    })
+                except Exception as exc:
+                    schema_rows.append({
+                        "table": table,
+                        "exists": False,
+                        "row_count": 0,
+                        "error": str(exc),
+                    })
+                    snapshot["errors"].append(f"{schema}.{table}: {exc}")
+
+            snapshot["layers"].append({"schema": schema, "tables": schema_rows})
+
+        # Count campaign schemas for quick GOLD visibility
+        with connection.cursor() as cursor:
+            cursor.execute("""
+                SELECT COUNT(*)
+                FROM information_schema.schemata
+                WHERE schema_name LIKE 'gold_campaign_%'
+            """)
+            snapshot["gold_campaign_schema_count"] = int(cursor.fetchone()[0])
+
+        # Latest ETL run metadata
+        if _table_exists("control", "etl_run_log"):
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    SELECT run_id, started_at, ended_at, status, notes
+                    FROM control.etl_run_log
+                    ORDER BY started_at DESC
+                    LIMIT 1
+                    """
+                )
+                row = cursor.fetchone()
+                if row:
+                    snapshot["latest_run"] = {
+                        "run_id": row[0],
+                        "started_at": row[1],
+                        "ended_at": row[2],
+                        "status": row[3],
+                        "notes": row[4],
+                    }
+
+        # Per-campaign GOLD table diagnostics
+        snapshot["campaign_schema_tables"] = []
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT schema_name
+                FROM information_schema.schemata
+                WHERE schema_name LIKE 'gold_campaign_%'
+                ORDER BY schema_name
+                """
+            )
+            campaign_schemas = [r[0] for r in cursor.fetchall()]
+
+        for schema_name in campaign_schemas:
+            tables = []
+            for table_name in ["fact_doctor_collateral_latest", "kpi_weekly_summary", "weekly_action_items"]:
+                try:
+                    exists = _table_exists(schema_name, table_name)
+                    row_count = _table_count(schema_name, table_name) if exists else 0
+                    tables.append({
+                        "table": table_name,
+                        "exists": exists,
+                        "row_count": row_count,
+                    })
+                except Exception as exc:
+                    tables.append({
+                        "table": table_name,
+                        "exists": False,
+                        "row_count": 0,
+                        "error": str(exc),
+                    })
+                    snapshot["errors"].append(f"{schema_name}.{table_name}: {exc}")
+
+            snapshot["campaign_schema_tables"].append({
+                "schema": schema_name,
+                "tables": tables,
+            })
+
+    except Exception as exc:
+        snapshot["errors"].append(str(exc))
+
+    return snapshot
+
 def menu_page(request: HttpRequest) -> HttpResponse:
     campaigns = _campaign_list()
-    return render(request, "dashboard/menu.html", {"campaigns": campaigns})
+    debug_snapshot = _build_debug_snapshot()
+    return render(request, "dashboard/menu.html", {"campaigns": campaigns, "debug_snapshot": debug_snapshot})
 
 
 def campaign_login(request: HttpRequest, brand_campaign_id: str) -> HttpResponse:
@@ -147,6 +288,7 @@ def _build_report_context(selected_campaign: str, week_filter: int | None = None
         "actions": ["Continue current execution and monitor weekly movement."],
     }
     collateral_cards = {"current": {}, "best": {}, "benchmark": {}}
+
     context_metrics = {
         "campaign_health": 0.0,
         "campaign_wow": 0.0,
@@ -447,4 +589,3 @@ def export_report(request: HttpRequest, brand_campaign_id: str):
     context = _build_report_context(brand_campaign_id, week_filter)
     context["export_mode"] = True
     return render(request, "dashboard/overview.html", context)
-
