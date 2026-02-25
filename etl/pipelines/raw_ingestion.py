@@ -33,7 +33,13 @@ def ingest_raw(run_id: str) -> dict[str, int]:
     for server, tables in SOURCE_TABLE_SPECS.items():
         schema = SCHEMA_BY_SERVER[server]
         for table, columns in tables.items():
-            rows = _extract(server, table)
+            try:
+                rows = _extract(server, table)
+            except Exception as exc:
+                counts[f"{schema}.{table}"] = 0
+                counts[f"{schema}.{table}__error"] = str(exc)
+                continue
+
             inserted = 0
             for row in rows:
                 source_values = [row.get(c) for c in columns]
