@@ -81,95 +81,58 @@
     weekSelect.addEventListener('change', () => weekForm.submit());
   }
 
-  const downloadBtn = document.getElementById('download-image-btn');
+  const downloadBtn = document.getElementById('download-pdf-btn');
   const reportRoot = document.getElementById('report-root');
   if (!downloadBtn || !reportRoot) return;
-
-  const elementToPng = async (element) => {
-    const width = element.scrollWidth;
-    const height = element.scrollHeight;
-    const clonedNode = element.cloneNode(true);
-    const clonedWrapper = document.createElement('div');
-    clonedWrapper.setAttribute('xmlns', 'http://www.w3.org/1999/xhtml');
-    clonedWrapper.style.width = `${width}px`;
-    clonedWrapper.style.height = `${height}px`;
-    clonedWrapper.appendChild(clonedNode);
-
-    const cssText = Array.from(document.styleSheets)
-      .map((sheet) => {
-        try {
-          return Array.from(sheet.cssRules || []).map((rule) => rule.cssText).join('\n');
-        } catch (err) {
-          return '';
-        }
-      })
-      .join('\n');
-
-    const style = document.createElement('style');
-    style.textContent = cssText;
-    clonedWrapper.insertBefore(style, clonedWrapper.firstChild);
-
-    const svg = `
-      <svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}">
-        <foreignObject width="100%" height="100%">${new XMLSerializer().serializeToString(clonedWrapper)}</foreignObject>
-      </svg>
-    `;
-
-    const svgBlob = new Blob([svg], { type: 'image/svg+xml;charset=utf-8' });
-    const svgUrl = URL.createObjectURL(svgBlob);
-
-    const img = new Image();
-    await new Promise((resolve, reject) => {
-      img.onload = resolve;
-      img.onerror = reject;
-      img.src = svgUrl;
-    });
-    URL.revokeObjectURL(svgUrl);
-
-    const canvasOut = document.createElement('canvas');
-    canvasOut.width = width;
-    canvasOut.height = height;
-    const outCtx = canvasOut.getContext('2d');
-    outCtx.fillStyle = '#f2f4f8';
-    outCtx.fillRect(0, 0, width, height);
-    outCtx.drawImage(img, 0, 0);
-    return canvasOut;
-  };
 
   downloadBtn.addEventListener('click', async () => {
     const originalText = downloadBtn.textContent;
     downloadBtn.disabled = true;
-    downloadBtn.textContent = 'Preparing...';
+    downloadBtn.textContent = 'Preparing PDF...';
 
     try {
-      const imageCanvas = await elementToPng(reportRoot);
-      const link = document.createElement('a');
+      if (typeof window.html2canvas !== 'function' || !window.jspdf?.jsPDF) {
+        throw new Error('Required PDF libraries are unavailable');
+      }
+
+      const captureCanvas = await window.html2canvas(reportRoot, {
+        backgroundColor: '#f2f4f8',
+        useCORS: true,
+        scale: Math.min(2, window.devicePixelRatio || 1.5),
+        windowWidth: document.documentElement.scrollWidth,
+        windowHeight: document.documentElement.scrollHeight,
+      });
+
+      const imgData = captureCanvas.toDataURL('image/png');
+      const { jsPDF } = window.jspdf;
+      const pdfDoc = new jsPDF('p', 'mm', 'a4');
+
+      const pageWidth = pdfDoc.internal.pageSize.getWidth();
+      const pageHeight = pdfDoc.internal.pageSize.getHeight();
+      const imgWidth = pageWidth;
+      const imgHeight = (captureCanvas.height * imgWidth) / captureCanvas.width;
+
+      let remaining = imgHeight;
+      let position = 0;
+
+      pdfDoc.addImage(imgData, 'PNG', 0, position, imgWidth, imgHeight);
+      remaining -= pageHeight;
+
+      while (remaining > 0) {
+        position = remaining - imgHeight;
+        pdfDoc.addPage();
+        pdfDoc.addImage(imgData, 'PNG', 0, position, imgWidth, imgHeight);
+        remaining -= pageHeight;
+      }
+
       const safeCampaign = (window.location.pathname.split('/')[2] || 'campaign').replace(/[^a-zA-Z0-9-_]/g, '_');
       const params = new URLSearchParams(window.location.search);
       const week = params.get('week');
       const suffix = week ? `_week_${week}` : '_all_weeks';
-      link.download = `in_clinic_report_${safeCampaign}${suffix}.png`;
-      link.href = imageCanvas.toDataURL('image/png');
-      link.click();
+      pdfDoc.save(`in_clinic_report_${safeCampaign}${suffix}.pdf`);
     } catch (err) {
-      console.error('Failed to download report image', err);
-      try {
-        const fallbackCanvas = document.createElement('canvas');
-        fallbackCanvas.width = window.innerWidth;
-        fallbackCanvas.height = window.innerHeight;
-        const ctx = fallbackCanvas.getContext('2d');
-        ctx.fillStyle = '#f2f4f8';
-        ctx.fillRect(0, 0, fallbackCanvas.width, fallbackCanvas.height);
-        ctx.fillStyle = '#111827';
-        ctx.font = '16px Arial';
-        ctx.fillText('Unable to capture full report in this browser.', 24, 40);
-        const link = document.createElement('a');
-        link.download = 'in_clinic_report_fallback.png';
-        link.href = fallbackCanvas.toDataURL('image/png');
-        link.click();
-      } catch (_) {
-        alert('Could not generate image download in this browser.');
-      }
+      console.error('Failed to auto-download PDF', err);
+      alert('PDF download failed in this browser. Please refresh and try again.');
     } finally {
       downloadBtn.disabled = false;
       downloadBtn.textContent = originalText;

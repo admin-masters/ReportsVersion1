@@ -26,7 +26,7 @@
         <p class="schedule">{{ schedule_text }}</p>
         <p class="footnote">Week = 7-day period ending on Saturday</p>
       </div>
-      <button type="button" id="download-image-btn" class="download-btn">Download Image</button>
+      <button type="button" id="download-pdf-btn" class="download-btn">Download PDF</button>
     </section>
 
     <section class="card controls-card">
@@ -199,6 +199,8 @@
   {{ reached_pct_series|json_script:"trend-reached" }}
   {{ pdf_pct_series|json_script:"trend-pdf" }}
   {{ video_pct_series|json_script:"trend-video" }}
+  <script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
   <script src="{% static 'dashboard/js/overview.js' %}"></script>
 </body>
 </html>
