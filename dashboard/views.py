@@ -254,8 +254,12 @@ def _build_debug_snapshot() -> dict[str, Any]:
 
 def menu_page(request: HttpRequest) -> HttpResponse:
     campaigns = _campaign_list()
+    return render(request, "dashboard/menu.html", {"campaigns": campaigns})
+
+
+def etl_debug_page(request: HttpRequest) -> HttpResponse:
     debug_snapshot = _build_debug_snapshot()
-    return render(request, "dashboard/menu.html", {"campaigns": campaigns, "debug_snapshot": debug_snapshot})
+    return render(request, "dashboard/debug.html", {"debug_snapshot": debug_snapshot})
 
 
 def campaign_login(request: HttpRequest, brand_campaign_id: str) -> HttpResponse:
@@ -287,6 +291,7 @@ def campaign_login(request: HttpRequest, brand_campaign_id: str) -> HttpResponse
 
 def _build_report_context(selected_campaign: str, week_filter: int | None = None) -> dict[str, Any]:
     selected_schema = None
+    all_weekly_rows: list[dict[str, Any]] = []
     weekly_rows: list[dict[str, Any]] = []
     error_message = None
     state_attention: list[dict[str, Any]] = []
@@ -331,10 +336,16 @@ def _build_report_context(selected_campaign: str, week_filter: int | None = None
             return {"error_message": "Campaign schema not found", **context_metrics}
 
         selected_schema = schema_rows[0]["gold_schema_name"]
-        weekly_rows = _fetch_dicts(f"SELECT * FROM {selected_schema}.kpi_weekly_summary ORDER BY week_index")
+        all_weekly_rows = _fetch_dicts(f"SELECT * FROM {selected_schema}.kpi_weekly_summary ORDER BY week_index")
+
+        week_options = sorted({_to_int(r.get("week_index")) for r in all_weekly_rows if _to_int(r.get("week_index")) > 0})
+        if week_filter and week_filter not in week_options:
+            week_filter = None
 
         if week_filter:
-            weekly_rows = [r for r in weekly_rows if _to_int(r.get("week_index")) == week_filter]
+            weekly_rows = [r for r in all_weekly_rows if _to_int(r.get("week_index")) == week_filter]
+        else:
+            weekly_rows = list(all_weekly_rows)
 
         schedule_rows = _fetch_dicts(
             """
@@ -371,13 +382,16 @@ def _build_report_context(selected_campaign: str, week_filter: int | None = None
             consumed_pct_opened = _safe_pct(latest_consumed, latest_opened)
 
             current_week_idx = _to_int(latest_week.get("week_index"), 1)
-            prev_week = weekly_rows[-2] if len(weekly_rows) > 1 else None
+            prev_week = None
+            if current_week_idx > 1:
+                prev_candidates = [r for r in all_weekly_rows if _to_int(r.get("week_index")) == current_week_idx - 1]
+                prev_week = prev_candidates[-1] if prev_candidates else None
 
-            campaign_health = sum(_to_float(r.get("weekly_health_score")) for r in weekly_rows) / max(len(weekly_rows), 1)
+            campaign_health = sum(_to_float(r.get("weekly_health_score")) for r in all_weekly_rows) / max(len(all_weekly_rows), 1)
             weekly_health = _to_float(latest_week.get("weekly_health_score"))
             wow_campaign = campaign_health - (
-                sum(_to_float(r.get("weekly_health_score")) for r in weekly_rows[:-1]) / max(len(weekly_rows[:-1]), 1)
-                if len(weekly_rows) > 1
+                sum(_to_float(r.get("weekly_health_score")) for r in all_weekly_rows[:-1]) / max(len(all_weekly_rows[:-1]), 1)
+                if len(all_weekly_rows) > 1
                 else campaign_health
             )
             wow_weekly = weekly_health - _to_float(prev_week.get("weekly_health_score")) if prev_week else 0.0
@@ -475,7 +489,7 @@ def _build_report_context(selected_campaign: str, week_filter: int | None = None
                     ],
                 }
 
-            weekly_best = max(weekly_rows, key=lambda r: _to_float(r.get("weekly_health_score")))
+            weekly_best = max(all_weekly_rows, key=lambda r: _to_float(r.get("weekly_health_score")))
             bench_rows = _fetch_dicts(
                 """
                 SELECT avg_campaign_health_score
@@ -544,13 +558,13 @@ def _build_report_context(selected_campaign: str, week_filter: int | None = None
     except Exception as exc:
         error_message = str(exc)
 
-    trend_labels = [f"Week {r.get('week_index')}" for r in weekly_rows]
-    reached_pct_series = [_safe_pct(_to_float(r.get("doctors_reached_unique")), _to_float(r.get("total_doctors_in_campaign"))) for r in weekly_rows]
-    opened_pct_series = [_safe_pct(_to_float(r.get("doctors_opened_unique")), _to_float(r.get("doctors_reached_unique"))) for r in weekly_rows]
-    pdf_pct_series = [_safe_pct(_to_float(r.get("pdf_download_unique")), _to_float(r.get("doctors_opened_unique"))) for r in weekly_rows]
-    video_pct_series = [_safe_pct(_to_float(r.get("video_viewed_50_unique")), _to_float(r.get("doctors_opened_unique"))) for r in weekly_rows]
+    trend_labels = [f"Week {r.get('week_index')}" for r in all_weekly_rows]
+    reached_pct_series = [_safe_pct(_to_float(r.get("doctors_reached_unique")), _to_float(r.get("total_doctors_in_campaign"))) for r in all_weekly_rows]
+    opened_pct_series = [_safe_pct(_to_float(r.get("doctors_opened_unique")), _to_float(r.get("doctors_reached_unique"))) for r in all_weekly_rows]
+    pdf_pct_series = [_safe_pct(_to_float(r.get("pdf_download_unique")), _to_float(r.get("doctors_opened_unique"))) for r in all_weekly_rows]
+    video_pct_series = [_safe_pct(_to_float(r.get("video_viewed_50_unique")), _to_float(r.get("doctors_opened_unique"))) for r in all_weekly_rows]
 
-    week_options = [_to_int(r.get("week_index")) for r in weekly_rows]
+    week_options = sorted({_to_int(r.get("week_index")) for r in all_weekly_rows if _to_int(r.get("week_index")) > 0})
 
     if selected_campaign:
         brand_logo_text = selected_campaign.replace("-", "")[:4].upper()
