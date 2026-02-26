@@ -11,7 +11,7 @@
   <main id="report-root" class="dashboard">
     <section id="header" class="card header-card">
       <div class="brand-block">
-        <div class="brand-logo">{{ brand_logo_text }}</div>
+        <div class="brand-logo">{{ brand_logo_text|slice:":6" }}</div>
         <div>
           <p class="brand-sub">{{ brand_name }}</p>
           <h1>In-Clinic Sharing System</h1>

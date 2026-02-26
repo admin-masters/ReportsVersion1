@@ -364,14 +364,12 @@ def _build_report_context(selected_campaign: str, week_filter: int | None = None
                         ELSE cc.end_date::date
                     END
                 ) AS schedule_end_date,
-                COALESCE(MIN(NULLIF(c.title, '')), MIN(NULLIF(s.collateral_title, ''))) AS collateral_title,
-                COALESCE(MIN(NULLIF(cm.brand_name, '')), MIN(NULLIF(cm.name, ''))) AS brand_name
-            FROM silver.map_brand_campaign_to_campaign m
-            LEFT JOIN bronze.campaign_management_campaign cm ON cm.brand_campaign_id = m.brand_campaign_id
-            LEFT JOIN bronze.collateral_management_campaigncollateral cc ON cc.campaign_id = m.campaign_id_resolved
+                MIN(NULLIF(c.title, '')) AS collateral_title,
+                MIN(NULLIF(cm.brand_name, '')) AS brand_name
+            FROM bronze.campaign_management_campaign cm
+            LEFT JOIN bronze.collateral_management_campaigncollateral cc ON cc.campaign_id = cm.id
             LEFT JOIN bronze.collateral_management_collateral c ON c.id = cc.collateral_id
-            LEFT JOIN silver.bridge_campaign_collateral_schedule s ON s.campaign_id = m.campaign_id_resolved
-            WHERE m.brand_campaign_id=%s
+            WHERE cm.brand_campaign_id=%s
             """,
             [selected_campaign],
         )
@@ -587,8 +585,7 @@ def _build_report_context(selected_campaign: str, week_filter: int | None = None
     if selected_campaign:
         if not brand_name or brand_name == "Apex":
             brand_name = f"Brand {selected_campaign[:8]}"
-        logo_seed = (brand_name or selected_campaign).replace(" ", "")
-        brand_logo_text = logo_seed[:4].upper()
+        brand_logo_text = (brand_name or selected_campaign).strip()
 
     return {
         "selected_campaign": selected_campaign,
