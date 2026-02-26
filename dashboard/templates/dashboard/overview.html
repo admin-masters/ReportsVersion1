@@ -30,15 +30,18 @@
     </section>
 
     <section class="card controls-card">
-      <div>
+      <form id="week-filter-form" method="get" class="week-filter-form">
         <label for="week-select">Week Filter</label>
-        <select id="week-select" onchange="(function(v){const u=new URL(window.location.href); if(v){u.searchParams.set('week', v);}else{u.searchParams.delete('week');} window.location=u.toString();})(this.value)">
-          <option value="">All Weeks</option>
-          {% for w in week_options %}
-          <option value="{{ w }}" {% if selected_week == w %}selected{% endif %}>Week {{ w }}</option>
-          {% endfor %}
-        </select>
-      </div>
+        <div class="week-filter-row">
+          <select id="week-select" name="week">
+            <option value="" {% if not selected_week %}selected{% endif %}>All Weeks</option>
+            {% for w in week_options %}
+            <option value="{{ w }}" {% if selected_week == w %}selected{% endif %}>Week {{ w }}</option>
+            {% endfor %}
+          </select>
+          <button type="submit" class="ghost-btn">Apply</button>
+        </div>
+      </form>
       <div class="meta">
         <span><strong>Campaign:</strong> {{ selected_campaign }}</span>
         <span><a href="/">← Back to Menu</a></span>
@@ -196,7 +199,6 @@
   {{ reached_pct_series|json_script:"trend-reached" }}
   {{ pdf_pct_series|json_script:"trend-pdf" }}
   {{ video_pct_series|json_script:"trend-video" }}
-  <script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
   <script src="{% static 'dashboard/js/overview.js' %}"></script>
 </body>
 </html>

@@ -98,3 +98,35 @@ select{min-width:360px;padding:8px;border:1px solid var(--line);border-radius:6p
   .menu-table td{border-bottom:none;padding:6px 0}
   .menu-table td::before{content:attr(data-label);display:block;font-size:11px;color:#5a6f8f;text-transform:uppercase;letter-spacing:.05em;margin-bottom:2px;font-weight:700}
 }
+
+/* Modern polish */
+body{background:linear-gradient(180deg,#eef3fb 0%,#f6f8fc 55%,#f2f5fb 100%)}
+.card{box-shadow:0 8px 24px rgba(20,37,63,.06)}
+h1{letter-spacing:-.02em}
+.download-btn{display:inline-flex;align-items:center;justify-content:center;text-decoration:none;transition:all .2s ease;background:linear-gradient(135deg,#0f172a,#1f3258)}
+.download-btn:hover{transform:translateY(-1px);box-shadow:0 8px 20px rgba(17,24,39,.24)}
+.controls-card{gap:12px;flex-wrap:wrap}
+.week-filter-form{display:grid;gap:6px}
+.week-filter-row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+
+.menu-table-card{padding:18px}
+.menu-table tbody tr:hover{background:#f8fbff}
+.menu-table td:last-child{width:170px}
+.menu-table td .download-btn{width:100%}
+
+.login-page{max-width:760px;padding-top:36px}
+.login-card{padding:28px;max-width:620px;margin:0 auto;background:linear-gradient(180deg,#ffffff,#f8fbff)}
+.login-title{font-size:34px;margin:2px 0 14px}
+.login-form{display:grid;gap:14px;margin-top:10px}
+.login-form input{width:100%;padding:12px 13px;border:1px solid #d5dfef;border-radius:10px;font-size:15px;background:#fff}
+.login-form input:focus{outline:none;border-color:#4f7dd1;box-shadow:0 0 0 3px rgba(79,125,209,.16)}
+.login-submit{margin-top:4px}
+.credential-hint{margin-top:12px;padding:10px 12px;border-radius:8px;background:#f1f5fb;border:1px solid #dbe5f3}
+
+@media (max-width: 768px){
+  h1{font-size:32px}
+  .header-center h2{font-size:24px}
+  .download-btn{width:100%}
+  .menu-table td:last-child{width:auto}
+  .week-filter-row select,.week-filter-row .ghost-btn{width:100%}
+}

@@ -75,9 +75,60 @@
     });
   }
 
+  const weekForm = document.getElementById('week-filter-form');
+  const weekSelect = document.getElementById('week-select');
+  if (weekForm && weekSelect) {
+    weekSelect.addEventListener('change', () => weekForm.submit());
+  }
+
   const downloadBtn = document.getElementById('download-image-btn');
   const reportRoot = document.getElementById('report-root');
-  if (!downloadBtn || !reportRoot || typeof window.html2canvas !== 'function') return;
+  if (!downloadBtn || !reportRoot) return;
+
+  const elementToPng = async (element) => {
+    const width = element.scrollWidth;
+    const height = element.scrollHeight;
+    const clonedNode = element.cloneNode(true);
+    const clonedWrapper = document.createElement('div');
+    clonedWrapper.setAttribute('xmlns', 'http://www.w3.org/1999/xhtml');
+    clonedWrapper.style.width = `${width}px`;
+    clonedWrapper.style.height = `${height}px`;
+    clonedWrapper.appendChild(clonedNode);
+
+    const cssText = Array.from(document.styleSheets)
+      .map((sheet) => {
+        try {
+          return Array.from(sheet.cssRules || []).map((rule) => rule.cssText).join('\n');
+        } catch (err) {
+          return '';
+        }
+      })
+      .join('\n');
+
+    const style = document.createElement('style');
+    style.textContent = cssText;
+    clonedWrapper.insertBefore(style, clonedWrapper.firstChild);
+
+    const svg = `
+      <svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}">
+        <foreignObject width="100%" height="100%">${new XMLSerializer().serializeToString(clonedWrapper)}</foreignObject>
+      </svg>
+    `;
+
+    const img = new Image();
+    img.decoding = 'sync';
+    img.src = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
+    await img.decode();
+
+    const canvasOut = document.createElement('canvas');
+    canvasOut.width = width;
+    canvasOut.height = height;
+    const outCtx = canvasOut.getContext('2d');
+    outCtx.fillStyle = '#f2f4f8';
+    outCtx.fillRect(0, 0, width, height);
+    outCtx.drawImage(img, 0, 0);
+    return canvasOut;
+  };
 
   downloadBtn.addEventListener('click', async () => {
     const originalText = downloadBtn.textContent;
@@ -85,12 +136,7 @@
     downloadBtn.textContent = 'Preparing...';
 
     try {
-      const imageCanvas = await window.html2canvas(reportRoot, {
-        backgroundColor: '#f3f6fb',
-        scale: Math.min(2, window.devicePixelRatio || 1.5),
-        useCORS: true,
-      });
-
+      const imageCanvas = await elementToPng(reportRoot);
       const link = document.createElement('a');
       const safeCampaign = (window.location.pathname.split('/')[2] || 'campaign').replace(/[^a-zA-Z0-9-_]/g, '_');
       const params = new URLSearchParams(window.location.search);
@@ -101,7 +147,7 @@
       link.click();
     } catch (err) {
       console.error('Failed to download report image', err);
-      alert('Could not generate image download. Please try again.');
+      alert('Could not generate image download in this browser.');
     } finally {
       downloadBtn.disabled = false;
       downloadBtn.textContent = originalText;
