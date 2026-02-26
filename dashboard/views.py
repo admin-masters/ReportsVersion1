@@ -349,11 +349,28 @@ def _build_report_context(selected_campaign: str, week_filter: int | None = None
 
         schedule_rows = _fetch_dicts(
             """
-            SELECT MIN(schedule_start_date) AS schedule_start_date,
-                   MAX(schedule_end_date) AS schedule_end_date,
-                   MIN(collateral_title) AS collateral_title
-            FROM silver.bridge_campaign_collateral_schedule s
-            JOIN silver.map_brand_campaign_to_campaign m ON m.campaign_id_resolved = s.campaign_id
+            SELECT
+                MIN(
+                    CASE
+                        WHEN cc.start_date IS NULL OR btrim(cc.start_date) = '' OR lower(btrim(cc.start_date)) = 'null'
+                        THEN NULL
+                        ELSE cc.start_date::date
+                    END
+                ) AS schedule_start_date,
+                MAX(
+                    CASE
+                        WHEN cc.end_date IS NULL OR btrim(cc.end_date) = '' OR lower(btrim(cc.end_date)) = 'null'
+                        THEN NULL
+                        ELSE cc.end_date::date
+                    END
+                ) AS schedule_end_date,
+                COALESCE(MIN(NULLIF(c.title, '')), MIN(NULLIF(s.collateral_title, ''))) AS collateral_title,
+                COALESCE(MIN(NULLIF(cm.brand_name, '')), MIN(NULLIF(cm.name, ''))) AS brand_name
+            FROM silver.map_brand_campaign_to_campaign m
+            LEFT JOIN bronze.campaign_management_campaign cm ON cm.brand_campaign_id = m.brand_campaign_id
+            LEFT JOIN bronze.collateral_management_campaigncollateral cc ON cc.campaign_id = m.campaign_id_resolved
+            LEFT JOIN bronze.collateral_management_collateral c ON c.id = cc.collateral_id
+            LEFT JOIN silver.bridge_campaign_collateral_schedule s ON s.campaign_id = m.campaign_id_resolved
             WHERE m.brand_campaign_id=%s
             """,
             [selected_campaign],
@@ -364,6 +381,7 @@ def _build_report_context(selected_campaign: str, week_filter: int | None = None
             if start and end:
                 schedule_text = f"{start} - {end}"
             collateral_name = schedule_rows[0].get("collateral_title") or collateral_name
+            brand_name = schedule_rows[0].get("brand_name") or brand_name
 
         if weekly_rows:
             latest_week = weekly_rows[-1]
@@ -567,8 +585,10 @@ def _build_report_context(selected_campaign: str, week_filter: int | None = None
     week_options = sorted({_to_int(r.get("week_index")) for r in all_weekly_rows if _to_int(r.get("week_index")) > 0})
 
     if selected_campaign:
-        brand_logo_text = selected_campaign.replace("-", "")[:4].upper()
-        brand_name = f"Brand {selected_campaign[:8]}"
+        if not brand_name or brand_name == "Apex":
+            brand_name = f"Brand {selected_campaign[:8]}"
+        logo_seed = (brand_name or selected_campaign).replace(" ", "")
+        brand_logo_text = logo_seed[:4].upper()
 
     return {
         "selected_campaign": selected_campaign,
