@@ -91,22 +91,18 @@ def _campaign_list() -> list[dict[str, Any]]:
               r.brand_campaign_id,
               r.gold_schema_name,
               COALESCE(
-                MIN(NULLIF(cc.name, '')),
-                MIN(NULLIF(cm.name, '')),
+                MIN(NULLIF(hcmc.name, '')),
                 'Campaign ' || r.brand_campaign_id
               ) AS campaign_name
             FROM gold_global.campaign_registry r
-            LEFT JOIN silver.map_brand_campaign_to_campaign m ON m.brand_campaign_id = r.brand_campaign_id
-            LEFT JOIN bronze.campaign_campaign cc ON cc.id = m.campaign_id_resolved
-            LEFT JOIN bronze.campaign_management_campaign cm ON cm.brand_campaign_id = r.brand_campaign_id
+            LEFT JOIN healthcare_forms_2.campaign_management_campaign hcmc
+              ON hcmc.brand_campaign_id = r.brand_campaign_id
             GROUP BY r.brand_campaign_id, r.gold_schema_name
             ORDER BY r.brand_campaign_id
             """
         )
     except (ProgrammingError, OperationalError):
         return []
-
-
 
 def _table_exists(schema: str, table: str) -> bool:
     with connection.cursor() as cursor:
