@@ -91,8 +91,8 @@ def _campaign_list() -> list[dict[str, Any]]:
               r.brand_campaign_id,
               r.gold_schema_name,
               COALESCE(
-                MIN(NULLIF(cm.name, '')),
                 MIN(NULLIF(cc.name, '')),
+                MIN(NULLIF(cm.name, '')),
                 'Campaign ' || r.brand_campaign_id
               ) AS campaign_name
             FROM gold_global.campaign_registry r

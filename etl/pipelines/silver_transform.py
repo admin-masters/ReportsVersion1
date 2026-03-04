@@ -184,7 +184,7 @@ def build_silver(run_id: str) -> None:
         )
         SELECT
             c.brand_campaign_id,
-            COALESCE(MIN(cm.id::text), MIN(coll.campaign_id)) AS campaign_id_resolved,
+            COALESCE(MIN(coll.campaign_id), MIN(cm.id::text)) AS campaign_id_resolved,
             COUNT(DISTINCT COALESCE(cm.id::text, coll.campaign_id)) AS distinct_campaign_id_count,
             CASE WHEN COUNT(DISTINCT COALESCE(cm.id::text, coll.campaign_id)) <= 1 THEN 'PASS' ELSE 'FAIL' END AS _dq_status,
             CASE WHEN COUNT(DISTINCT COALESCE(cm.id::text, coll.campaign_id)) <= 1 THEN NULL ELSE 'Campaign mapping inconsistency' END AS _dq_errors,
