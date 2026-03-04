@@ -111,24 +111,46 @@ def build_gold(run_id: str) -> None:
             CREATE TABLE {schema}.kpi_weekly_summary AS
             WITH base AS (
                 SELECT COUNT(DISTINCT doctor_identity_key) AS total_doctors_in_campaign
-                FROM silver.bridge_brand_campaign_doctor_base WHERE brand_campaign_id=%s
+                FROM silver.bridge_brand_campaign_doctor_base
+                WHERE brand_campaign_id=%s
             ),
-            fact_normalized AS (
-                SELECT
-                    COALESCE(NULLIF(doctor_master_id_resolved,''), doctor_identity_key, source_latest_transaction_id::text) AS doctor_key,
-                    CASE WHEN reached_first_ts IS NULL OR btrim(reached_first_ts) = '' OR lower(btrim(reached_first_ts)) = 'null' THEN NULL ELSE reached_first_ts::date END AS reached_first_date,
-                    CASE WHEN opened_first_ts IS NULL OR btrim(opened_first_ts) = '' OR lower(btrim(opened_first_ts)) = 'null' THEN NULL ELSE opened_first_ts::date END AS opened_first_date,
-                    CASE WHEN video_gt_50_first_ts IS NULL OR btrim(video_gt_50_first_ts) = '' OR lower(btrim(video_gt_50_first_ts)) = 'null' THEN NULL ELSE video_gt_50_first_ts::date END AS video_gt_50_first_date,
-                    CASE WHEN pdf_download_first_ts IS NULL OR btrim(pdf_download_first_ts) = '' OR lower(btrim(pdf_download_first_ts)) = 'null' THEN NULL ELSE pdf_download_first_ts::date END AS pdf_download_first_date
+            reached_events AS (
+                SELECT DISTINCT
+                    COALESCE(NULLIF(doctor_identity_key,''), md5(id::text)) AS doctor_key,
+                    share_event_date::date AS event_date
+                FROM silver.fact_share_log
+                WHERE brand_campaign_id=%s
+                  AND share_event_date IS NOT NULL
+            ),
+            opened_events AS (
+                SELECT DISTINCT
+                    COALESCE(NULLIF(doctor_identity_key,''), source_latest_transaction_id::text) AS doctor_key,
+                    CASE WHEN opened_first_ts IS NULL OR btrim(opened_first_ts) = '' OR lower(btrim(opened_first_ts)) = 'null' THEN NULL ELSE opened_first_ts::date END AS event_date
+                FROM {schema}.fact_doctor_collateral_latest
+            ),
+            video_events AS (
+                SELECT DISTINCT
+                    COALESCE(NULLIF(doctor_identity_key,''), source_latest_transaction_id::text) AS doctor_key,
+                    CASE WHEN video_gt_50_first_ts IS NULL OR btrim(video_gt_50_first_ts) = '' OR lower(btrim(video_gt_50_first_ts)) = 'null' THEN NULL ELSE video_gt_50_first_ts::date END AS event_date
+                FROM {schema}.fact_doctor_collateral_latest
+            ),
+            pdf_events AS (
+                SELECT DISTINCT
+                    COALESCE(NULLIF(doctor_identity_key,''), source_latest_transaction_id::text) AS doctor_key,
+                    CASE WHEN pdf_download_first_ts IS NULL OR btrim(pdf_download_first_ts) = '' OR lower(btrim(pdf_download_first_ts)) = 'null' THEN NULL ELSE pdf_download_first_ts::date END AS event_date
                 FROM {schema}.fact_doctor_collateral_latest
             ),
             anchor_date AS (
-                SELECT
-                    COALESCE(
-                        MAX(COALESCE(reached_first_date, opened_first_date, video_gt_50_first_date, pdf_download_first_date)),
-                        CURRENT_DATE
-                    )::date AS reference_date
-                FROM fact_normalized
+                SELECT COALESCE(MAX(event_date), CURRENT_DATE)::date AS reference_date
+                FROM (
+                    SELECT event_date FROM reached_events
+                    UNION ALL
+                    SELECT event_date FROM opened_events WHERE event_date IS NOT NULL
+                    UNION ALL
+                    SELECT event_date FROM video_events WHERE event_date IS NOT NULL
+                    UNION ALL
+                    SELECT event_date FROM pdf_events WHERE event_date IS NOT NULL
+                ) u
             ),
             month_bounds AS (
                 SELECT
@@ -151,13 +173,19 @@ def build_gold(run_id: str) -> None:
                     w.week_index,
                     w.week_start_date,
                     w.week_end_date,
-                    COUNT(DISTINCT f.doctor_key) FILTER (WHERE f.reached_first_date BETWEEN w.week_start_date AND w.week_end_date) AS doctors_reached_unique,
-                    COUNT(DISTINCT f.doctor_key) FILTER (WHERE f.opened_first_date BETWEEN w.week_start_date AND w.week_end_date) AS doctors_opened_unique,
-                    COUNT(DISTINCT f.doctor_key) FILTER (WHERE f.video_gt_50_first_date BETWEEN w.week_start_date AND w.week_end_date) AS video_viewed_50_unique,
-                    COUNT(DISTINCT f.doctor_key) FILTER (WHERE f.pdf_download_first_date BETWEEN w.week_start_date AND w.week_end_date) AS pdf_download_unique,
-                    COUNT(DISTINCT f.doctor_key) FILTER (WHERE (f.video_gt_50_first_date BETWEEN w.week_start_date AND w.week_end_date) OR (f.pdf_download_first_date BETWEEN w.week_start_date AND w.week_end_date)) AS doctors_consumed_unique
+                    COUNT(DISTINCT r.doctor_key) FILTER (WHERE r.event_date BETWEEN w.week_start_date AND w.week_end_date) AS doctors_reached_unique,
+                    COUNT(DISTINCT o.doctor_key) FILTER (WHERE o.event_date BETWEEN w.week_start_date AND w.week_end_date) AS doctors_opened_unique,
+                    COUNT(DISTINCT v.doctor_key) FILTER (WHERE v.event_date BETWEEN w.week_start_date AND w.week_end_date) AS video_viewed_50_unique,
+                    COUNT(DISTINCT p.doctor_key) FILTER (WHERE p.event_date BETWEEN w.week_start_date AND w.week_end_date) AS pdf_download_unique,
+                    COUNT(DISTINCT COALESCE(v.doctor_key, p.doctor_key)) FILTER (
+                        WHERE (v.event_date BETWEEN w.week_start_date AND w.week_end_date)
+                           OR (p.event_date BETWEEN w.week_start_date AND w.week_end_date)
+                    ) AS doctors_consumed_unique
                 FROM weeks w
-                LEFT JOIN fact_normalized f ON TRUE
+                LEFT JOIN reached_events r ON TRUE
+                LEFT JOIN opened_events o ON TRUE
+                LEFT JOIN video_events v ON TRUE
+                LEFT JOIN pdf_events p ON TRUE
                 GROUP BY w.week_index, w.week_start_date, w.week_end_date
             )
             SELECT
@@ -190,7 +218,7 @@ def build_gold(run_id: str) -> None:
                 CASE WHEN b.total_doctors_in_campaign=0 THEN 1 ELSE 0 END AS insufficient_data_flag
             FROM agg CROSS JOIN base b
             """,
-            [brand_campaign_id, brand_campaign_id],
+            [brand_campaign_id, brand_campaign_id, brand_campaign_id],
         )
 
         execute(f"CREATE TABLE IF NOT EXISTS {schema}.weekly_action_items AS SELECT * FROM {schema}.kpi_weekly_summary WHERE false;")

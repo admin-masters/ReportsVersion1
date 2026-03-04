@@ -92,6 +92,24 @@
   const reportRoot = document.getElementById('report-root');
   if (!downloadBtn || !reportRoot) return;
 
+  const cloneForCapture = (root) => {
+    const clone = root.cloneNode(true);
+    clone.style.width = `${root.scrollWidth}px`;
+    clone.style.background = '#f2f4f8';
+    clone.style.position = 'fixed';
+    clone.style.left = '-99999px';
+    clone.style.top = '0';
+
+    clone.querySelectorAll('img').forEach((img) => {
+      img.setAttribute('crossorigin', 'anonymous');
+      if (!img.complete || img.naturalWidth === 0) {
+        img.remove();
+      }
+    });
+
+    return clone;
+  };
+
   downloadBtn.addEventListener('click', async () => {
     const originalText = downloadBtn.textContent;
     downloadBtn.disabled = true;
@@ -102,13 +120,20 @@
         throw new Error('Required PDF libraries are unavailable');
       }
 
-      const captureCanvas = await window.html2canvas(reportRoot, {
+      const captureRoot = cloneForCapture(reportRoot);
+      document.body.appendChild(captureRoot);
+
+      const captureCanvas = await window.html2canvas(captureRoot, {
         backgroundColor: '#f2f4f8',
         useCORS: true,
+        allowTaint: false,
+        imageTimeout: 0,
         scale: Math.min(2, window.devicePixelRatio || 1.5),
-        windowWidth: document.documentElement.scrollWidth,
-        windowHeight: document.documentElement.scrollHeight,
+        windowWidth: captureRoot.scrollWidth,
+        windowHeight: captureRoot.scrollHeight,
       });
+
+      captureRoot.remove();
 
       const imgData = captureCanvas.toDataURL('image/png');
       const { jsPDF } = window.jspdf;
