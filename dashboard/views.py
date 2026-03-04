@@ -91,9 +91,9 @@ def _campaign_list() -> list[dict[str, Any]]:
               r.brand_campaign_id,
               r.gold_schema_name,
               COALESCE(
-                MIN(NULLIF(cc.name, '')),
                 MIN(NULLIF(cm.name, '')),
-                'Unnamed Campaign'
+                MIN(NULLIF(cc.name, '')),
+                'Campaign ' || r.brand_campaign_id
               ) AS campaign_name
             FROM gold_global.campaign_registry r
             LEFT JOIN silver.map_brand_campaign_to_campaign m ON m.brand_campaign_id = r.brand_campaign_id
@@ -355,23 +355,6 @@ def _build_report_context(selected_campaign: str, week_filter: int | None = None
 
         schedule_rows = _fetch_dicts(
             """
-            WITH campaign_base AS (
-                SELECT id, brand_name, company_logo
-                FROM bronze.campaign_management_campaign
-                WHERE brand_campaign_id = %s
-            ),
-            top_collateral AS (
-                SELECT c.title AS collateral_title
-                FROM campaign_base cb
-                JOIN bronze.collateral_management_campaigncollateral cc ON cc.campaign_id = cb.id
-                JOIN bronze.collateral_management_collateral c ON c.id = cc.collateral_id
-                LEFT JOIN silver.fact_collateral_transaction t
-                  ON t.brand_campaign_id = %s
-                 AND t.collateral_id = c.id
-                GROUP BY c.id, c.title
-                ORDER BY COUNT(t.id) DESC, MIN(c.title)
-                LIMIT 1
-            )
             SELECT
                 MIN(
                     CASE
@@ -387,13 +370,15 @@ def _build_report_context(selected_campaign: str, week_filter: int | None = None
                         ELSE cc.end_date::date
                     END
                 ) AS schedule_end_date,
-                (SELECT collateral_title FROM top_collateral) AS collateral_title,
-                MIN(NULLIF(cb.brand_name, '')) AS brand_name,
-                MIN(NULLIF(cb.company_logo, '')) AS company_logo
-            FROM campaign_base cb
-            LEFT JOIN bronze.collateral_management_campaigncollateral cc ON cc.campaign_id = cb.id
+                MIN(NULLIF(c.title, '')) AS collateral_title,
+                MIN(NULLIF(cm.brand_name, '')) AS brand_name,
+                MIN(NULLIF(cm.company_logo, '')) AS company_logo
+            FROM bronze.campaign_management_campaign cm
+            LEFT JOIN bronze.collateral_management_campaigncollateral cc ON cc.campaign_id = cm.id
+            LEFT JOIN bronze.collateral_management_collateral c ON c.id = cc.collateral_id
+            WHERE cm.brand_campaign_id=%s
             """,
-            [selected_campaign, selected_campaign],
+            [selected_campaign],
         )
         if schedule_rows:
             start = _format_schedule_date(schedule_rows[0].get("schedule_start_date"))
@@ -404,7 +389,10 @@ def _build_report_context(selected_campaign: str, week_filter: int | None = None
             brand_name = schedule_rows[0].get("brand_name") or brand_name
             company_logo_path = (schedule_rows[0].get("company_logo") or "").strip()
             if company_logo_path:
-                company_logo_url = f"https://inclinic.inditech.co.in/media/{company_logo_path.lstrip('/')}"
+                if company_logo_path.startswith(("http://", "https://")):
+                    company_logo_url = company_logo_path
+                else:
+                    company_logo_url = f"https://inclinic.inditech.co.in/media/{company_logo_path.lstrip('/')}"
 
         if collateral_name in {"", "N/A", "Collateral"}:
             fallback_collateral = _fetch_dicts(
@@ -420,17 +408,7 @@ def _build_report_context(selected_campaign: str, week_filter: int | None = None
                 collateral_name = fallback_collateral[0].get("collateral_title") or collateral_name
 
         if weekly_rows:
-            if week_filter:
-                latest_week = weekly_rows[-1]
-            else:
-                active_weeks = [
-                    r for r in all_weekly_rows
-                    if any(
-                        _to_float(r.get(col)) > 0
-                        for col in ("doctors_reached_unique", "doctors_opened_unique", "video_viewed_50_unique", "pdf_download_unique")
-                    )
-                ]
-                latest_week = active_weeks[-1] if active_weeks else weekly_rows[-1]
+            latest_week = weekly_rows[-1]
             total_doctors = _to_float(latest_week.get("total_doctors_in_campaign"))
 
             latest_reached = _to_float(latest_week.get("doctors_reached_unique"))
@@ -656,7 +634,7 @@ def _build_report_context(selected_campaign: str, week_filter: int | None = None
                 "kpi_opened_pct": round(opened_pct_reached, 1),
                 "kpi_video_pct": round(video_pct_opened, 1),
                 "kpi_pdf_pct": round(pdf_pct_opened, 1),
-                "week_of": f"Week {current_week_idx}",
+                "week_of": f"Week {current_week_idx} ({latest_week.get('week_start_date')} to {latest_week.get('week_end_date')})",
             }
 
     except Exception as exc:

@@ -161,15 +161,12 @@ def build_silver(run_id: str) -> None:
         CREATE TABLE silver.fact_share_log AS
         SELECT
             s.*,
-            regexp_replace(COALESCE(s.doctor_identifier, ''), '[^0-9+]', '', 'g') AS doctor_phone_normalized,
-            md5(COALESCE(NULLIF(regexp_replace(COALESCE(s.doctor_identifier,''), '[^0-9+]', '', 'g'), ''), NULLIF(s.doctor_identifier, ''), s.id)) AS doctor_identity_key,
-            COALESCE(s.share_timestamp, s.created_at)::text AS share_event_ts,
-            CASE
-                WHEN COALESCE(s.share_timestamp, s.created_at) IS NULL THEN NULL
-                WHEN btrim(COALESCE(s.share_timestamp, s.created_at)) = '' THEN NULL
-                WHEN lower(btrim(COALESCE(s.share_timestamp, s.created_at))) = 'null' THEN NULL
-                ELSE (COALESCE(s.share_timestamp, s.created_at))::date
-            END AS share_event_date,
+            regexp_replace(COALESCE(s.doctor_identifier,''), '[^0-9+]', '', 'g') AS doctor_identifier_normalized,
+            md5(COALESCE(NULLIF(s.doctor_identifier,''), s.id::text)) AS doctor_identity_key,
+            COALESCE(s.share_timestamp, s.created_at)::text AS reached_event_ts,
+            s.share_timestamp::text AS share_timestamp_ts,
+            s.created_at::text AS created_at_ts,
+            s.updated_at::text AS updated_at_ts,
             NOW()::text AS _silver_updated_at,
             '{run_id}'::text AS _as_of_run_id
         FROM bronze.sharing_management_sharelog s
@@ -180,23 +177,26 @@ def build_silver(run_id: str) -> None:
     execute(
         """
         CREATE TABLE silver.map_brand_campaign_to_campaign AS
-        SELECT
-            x.brand_campaign_id,
-            COALESCE(MIN(cm.id::text), MIN(c.campaign_id)) AS campaign_id_resolved,
-            COUNT(DISTINCT COALESCE(cm.id::text, c.campaign_id)) AS distinct_campaign_id_count,
-            CASE WHEN COUNT(DISTINCT COALESCE(cm.id::text, c.campaign_id)) <= 1 THEN 'PASS' ELSE 'FAIL' END AS _dq_status,
-            CASE WHEN COUNT(DISTINCT COALESCE(cm.id::text, c.campaign_id)) <= 1 THEN NULL ELSE 'Campaign mapping inconsistency' END AS _dq_errors,
-            NOW()::text AS _silver_updated_at
-        FROM (
-            SELECT DISTINCT brand_campaign_id, collateral_id
-            FROM silver.fact_collateral_transaction
+        WITH campaign_ids AS (
+            SELECT brand_campaign_id FROM silver.fact_collateral_transaction
             UNION
-            SELECT DISTINCT brand_campaign_id, collateral_id
-            FROM silver.fact_share_log
-        ) x
-        LEFT JOIN bronze.campaign_management_campaign cm ON cm.brand_campaign_id = x.brand_campaign_id
-        LEFT JOIN silver.dim_collateral c ON c.id = x.collateral_id
-        GROUP BY x.brand_campaign_id
+            SELECT brand_campaign_id FROM silver.fact_share_log
+        )
+        SELECT
+            c.brand_campaign_id,
+            COALESCE(MIN(cm.id::text), MIN(coll.campaign_id)) AS campaign_id_resolved,
+            COUNT(DISTINCT COALESCE(cm.id::text, coll.campaign_id)) AS distinct_campaign_id_count,
+            CASE WHEN COUNT(DISTINCT COALESCE(cm.id::text, coll.campaign_id)) <= 1 THEN 'PASS' ELSE 'FAIL' END AS _dq_status,
+            CASE WHEN COUNT(DISTINCT COALESCE(cm.id::text, coll.campaign_id)) <= 1 THEN NULL ELSE 'Campaign mapping inconsistency' END AS _dq_errors,
+            NOW()::text AS _silver_updated_at
+        FROM campaign_ids c
+        LEFT JOIN bronze.campaign_management_campaign cm ON cm.brand_campaign_id = c.brand_campaign_id
+        LEFT JOIN silver.dim_collateral coll ON coll.id IN (
+            SELECT DISTINCT collateral_id FROM silver.fact_collateral_transaction t WHERE t.brand_campaign_id = c.brand_campaign_id
+            UNION
+            SELECT DISTINCT collateral_id FROM silver.fact_share_log s WHERE s.brand_campaign_id = c.brand_campaign_id
+        )
+        GROUP BY c.brand_campaign_id
         """
     )
 
@@ -205,36 +205,32 @@ def build_silver(run_id: str) -> None:
         """
         CREATE TABLE silver.bridge_brand_campaign_doctor_base AS
         SELECT DISTINCT
-            z.brand_campaign_id,
-            z.doctor_identity_key,
-            z.doctor_master_id_resolved,
-            z.field_rep_id_resolved,
-            COALESCE(fr.state_normalized, 'UNKNOWN') AS state_normalized,
-            z.inclusion_reason,
+            x.brand_campaign_id,
+            x.doctor_identity_key,
+            d.id AS doctor_master_id_resolved,
+            x.field_rep_id_resolved,
+            COALESCE(fr.state_normalized, d.state_normalized, 'UNKNOWN') AS state_normalized,
+            x.inclusion_reason,
             NOW()::text AS _silver_updated_at,
             'PASS'::text AS _dq_status,
             NULL::text AS _dq_errors
         FROM (
-            SELECT DISTINCT
+            SELECT
                 t.brand_campaign_id,
                 t.doctor_identity_key,
-                t.doctor_master_id_resolved,
                 t.field_rep_id AS field_rep_id_resolved,
-                CASE WHEN d.id IS NOT NULL THEN 'MASTER_BY_REP' ELSE 'OBSERVED_IN_TRANSACTION' END AS inclusion_reason
+                'OBSERVED_IN_TRANSACTION'::text AS inclusion_reason
             FROM silver.fact_collateral_transaction t
-            LEFT JOIN silver.dim_doctor d ON d.doctor_identity_key = t.doctor_identity_key
-
             UNION
-
-            SELECT DISTINCT
+            SELECT
                 s.brand_campaign_id,
                 s.doctor_identity_key,
-                NULL::text AS doctor_master_id_resolved,
-                s.field_rep_id AS field_rep_id_resolved,
-                'OBSERVED_IN_SHARELOG' AS inclusion_reason
+                s.field_rep_id::text AS field_rep_id_resolved,
+                'OBSERVED_IN_SHARELOG'::text AS inclusion_reason
             FROM silver.fact_share_log s
-        ) z
-        LEFT JOIN silver.dim_field_rep fr ON COALESCE(NULLIF(fr.source_field_rep_id,''), fr.id) = z.field_rep_id_resolved
+        ) x
+        LEFT JOIN silver.dim_doctor d ON d.doctor_identity_key = x.doctor_identity_key
+        LEFT JOIN silver.dim_field_rep fr ON COALESCE(NULLIF(fr.source_field_rep_id,''), fr.id) = x.field_rep_id_resolved
         """
     )
 
@@ -242,17 +238,46 @@ def build_silver(run_id: str) -> None:
     execute(
         """
         CREATE TABLE silver.doctor_action_first_seen AS
+        WITH tx AS (
+            SELECT
+                brand_campaign_id,
+                collateral_id,
+                doctor_identity_key,
+                MIN(NULLIF(reached_event_ts,'')) AS reached_first_tx_ts,
+                MIN(NULLIF(opened_event_ts,'')) AS opened_first_ts,
+                MIN(NULLIF(video_gt_50_event_ts,'')) FILTER (WHERE video_view_gt_50_flag='1') AS video_gt_50_first_ts,
+                MIN(NULLIF(COALESCE(viewed_last_page_at_ts, updated_at_ts),'')) FILTER (WHERE downloaded_pdf_flag='1') AS pdf_download_first_ts,
+                MAX(COALESCE(NULLIF(updated_at_ts,''), NULLIF(last_viewed_at_ts,''))) AS last_activity_tx_ts
+            FROM silver.fact_collateral_transaction
+            GROUP BY brand_campaign_id, collateral_id, doctor_identity_key
+        ),
+        share AS (
+            SELECT
+                brand_campaign_id,
+                collateral_id,
+                doctor_identity_key,
+                MIN(NULLIF(reached_event_ts,'')) AS reached_first_share_ts,
+                MAX(NULLIF(updated_at_ts,'')) AS last_activity_share_ts
+            FROM silver.fact_share_log
+            GROUP BY brand_campaign_id, collateral_id, doctor_identity_key
+        ),
+        keys AS (
+            SELECT brand_campaign_id, collateral_id, doctor_identity_key FROM tx
+            UNION
+            SELECT brand_campaign_id, collateral_id, doctor_identity_key FROM share
+        )
         SELECT
-            brand_campaign_id,
-            collateral_id,
-            doctor_identity_key,
-            MIN(NULLIF(reached_event_ts,'')) AS reached_first_ts,
-            MIN(NULLIF(opened_event_ts,'')) AS opened_first_ts,
-            MIN(NULLIF(video_gt_50_event_ts,'')) FILTER (WHERE video_view_gt_50_flag='1') AS video_gt_50_first_ts,
-            MIN(NULLIF(COALESCE(viewed_last_page_at_ts, updated_at_ts),'')) FILTER (WHERE downloaded_pdf_flag='1') AS pdf_download_first_ts,
-            MAX(COALESCE(NULLIF(updated_at_ts,''), NULLIF(last_viewed_at_ts,''))) AS last_activity_ts,
+            k.brand_campaign_id,
+            k.collateral_id,
+            k.doctor_identity_key,
+            COALESCE(share.reached_first_share_ts, tx.reached_first_tx_ts) AS reached_first_ts,
+            tx.opened_first_ts,
+            tx.video_gt_50_first_ts,
+            tx.pdf_download_first_ts,
+            COALESCE(tx.last_activity_tx_ts, share.last_activity_share_ts) AS last_activity_ts,
             NOW()::text AS _silver_updated_at
-        FROM silver.fact_collateral_transaction
-        GROUP BY brand_campaign_id, collateral_id, doctor_identity_key
+        FROM keys k
+        LEFT JOIN tx ON tx.brand_campaign_id = k.brand_campaign_id AND tx.collateral_id = k.collateral_id AND tx.doctor_identity_key = k.doctor_identity_key
+        LEFT JOIN share ON share.brand_campaign_id = k.brand_campaign_id AND share.collateral_id = k.collateral_id AND share.doctor_identity_key = k.doctor_identity_key
         """
     )

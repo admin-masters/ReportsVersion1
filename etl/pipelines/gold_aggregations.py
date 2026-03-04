@@ -72,37 +72,48 @@ def build_gold(run_id: str) -> None:
         execute(
             f"""
             CREATE TABLE {schema}.fact_doctor_collateral_latest AS
+            WITH latest_tx AS (
+                SELECT DISTINCT ON (brand_campaign_id, collateral_id, doctor_identity_key)
+                    brand_campaign_id,
+                    collateral_id,
+                    doctor_identity_key,
+                    id AS source_latest_transaction_id,
+                    doctor_master_id_resolved,
+                    field_rep_id
+                FROM silver.fact_collateral_transaction
+                WHERE brand_campaign_id = %s
+                ORDER BY brand_campaign_id, collateral_id, doctor_identity_key, COALESCE(updated_at_ts, created_at_ts, transaction_date_ts) DESC, id DESC
+            )
             SELECT
-                f.brand_campaign_id,
-                f.collateral_id,
-                f.doctor_identity_key,
-                MAX(f.doctor_master_id_resolved) AS doctor_master_id_resolved,
-                MAX(f.field_rep_id) AS field_rep_id_resolved,
-                MAX(b.state_normalized) AS state_normalized,
-                CASE WHEN MIN(a.reached_first_ts) IS NOT NULL THEN 1 ELSE 0 END AS is_reached,
-                CASE WHEN MIN(a.opened_first_ts) IS NOT NULL THEN 1 ELSE 0 END AS is_opened,
-                CASE WHEN MIN(a.video_gt_50_first_ts) IS NOT NULL THEN 1 ELSE 0 END AS is_video_viewed_gt_50,
-                CASE WHEN MIN(a.pdf_download_first_ts) IS NOT NULL THEN 1 ELSE 0 END AS is_pdf_downloaded,
-                CASE WHEN MIN(a.video_gt_50_first_ts) IS NOT NULL OR MIN(a.pdf_download_first_ts) IS NOT NULL THEN 1 ELSE 0 END AS is_consumed,
-                MIN(a.reached_first_ts) AS reached_first_ts,
-                MIN(a.opened_first_ts) AS opened_first_ts,
-                MIN(a.video_gt_50_first_ts) AS video_gt_50_first_ts,
-                MIN(a.pdf_download_first_ts) AS pdf_download_first_ts,
-                MAX(a.last_activity_ts) AS last_activity_ts,
-                MAX(f.id) AS source_latest_transaction_id,
+                a.brand_campaign_id,
+                a.collateral_id,
+                a.doctor_identity_key,
+                tx.doctor_master_id_resolved,
+                tx.field_rep_id AS field_rep_id_resolved,
+                COALESCE(b.state_normalized, 'UNKNOWN') AS state_normalized,
+                CASE WHEN a.reached_first_ts IS NOT NULL THEN 1 ELSE 0 END AS is_reached,
+                CASE WHEN a.opened_first_ts IS NOT NULL THEN 1 ELSE 0 END AS is_opened,
+                CASE WHEN a.video_gt_50_first_ts IS NOT NULL THEN 1 ELSE 0 END AS is_video_viewed_gt_50,
+                CASE WHEN a.pdf_download_first_ts IS NOT NULL THEN 1 ELSE 0 END AS is_pdf_downloaded,
+                CASE WHEN a.video_gt_50_first_ts IS NOT NULL OR a.pdf_download_first_ts IS NOT NULL THEN 1 ELSE 0 END AS is_consumed,
+                a.reached_first_ts,
+                a.opened_first_ts,
+                a.video_gt_50_first_ts,
+                a.pdf_download_first_ts,
+                a.last_activity_ts,
+                tx.source_latest_transaction_id,
                 '{run_id}'::text AS _as_of_run_id,
                 NOW()::text AS _as_of_ts
-            FROM silver.fact_collateral_transaction f
-            JOIN silver.doctor_action_first_seen a
-              ON a.brand_campaign_id=f.brand_campaign_id
-             AND a.collateral_id=f.collateral_id
-             AND a.doctor_identity_key=f.doctor_identity_key
+            FROM silver.doctor_action_first_seen a
+            LEFT JOIN latest_tx tx
+              ON tx.brand_campaign_id=a.brand_campaign_id
+             AND tx.collateral_id=a.collateral_id
+             AND tx.doctor_identity_key=a.doctor_identity_key
             LEFT JOIN silver.bridge_brand_campaign_doctor_base b
-              ON b.brand_campaign_id=f.brand_campaign_id AND b.doctor_identity_key=f.doctor_identity_key
-            WHERE f.brand_campaign_id = %s
-            GROUP BY f.brand_campaign_id, f.collateral_id, f.doctor_identity_key
+              ON b.brand_campaign_id=a.brand_campaign_id AND b.doctor_identity_key=a.doctor_identity_key
+            WHERE a.brand_campaign_id = %s
             """,
-            [brand_campaign_id],
+            [brand_campaign_id, brand_campaign_id],
         )
 
         execute(f"DROP TABLE IF EXISTS {schema}.kpi_weekly_summary;")
@@ -111,46 +122,20 @@ def build_gold(run_id: str) -> None:
             CREATE TABLE {schema}.kpi_weekly_summary AS
             WITH base AS (
                 SELECT COUNT(DISTINCT doctor_identity_key) AS total_doctors_in_campaign
-                FROM silver.bridge_brand_campaign_doctor_base
-                WHERE brand_campaign_id=%s
+                FROM silver.bridge_brand_campaign_doctor_base WHERE brand_campaign_id=%s
             ),
-            reached_events AS (
-                SELECT DISTINCT
-                    COALESCE(NULLIF(doctor_identity_key,''), md5(id::text)) AS doctor_key,
-                    share_event_date::date AS event_date
-                FROM silver.fact_share_log
-                WHERE brand_campaign_id=%s
-                  AND share_event_date IS NOT NULL
-            ),
-            opened_events AS (
-                SELECT DISTINCT
-                    COALESCE(NULLIF(doctor_identity_key,''), source_latest_transaction_id::text) AS doctor_key,
-                    CASE WHEN opened_first_ts IS NULL OR btrim(opened_first_ts) = '' OR lower(btrim(opened_first_ts)) = 'null' THEN NULL ELSE opened_first_ts::date END AS event_date
-                FROM {schema}.fact_doctor_collateral_latest
-            ),
-            video_events AS (
-                SELECT DISTINCT
-                    COALESCE(NULLIF(doctor_identity_key,''), source_latest_transaction_id::text) AS doctor_key,
-                    CASE WHEN video_gt_50_first_ts IS NULL OR btrim(video_gt_50_first_ts) = '' OR lower(btrim(video_gt_50_first_ts)) = 'null' THEN NULL ELSE video_gt_50_first_ts::date END AS event_date
-                FROM {schema}.fact_doctor_collateral_latest
-            ),
-            pdf_events AS (
-                SELECT DISTINCT
-                    COALESCE(NULLIF(doctor_identity_key,''), source_latest_transaction_id::text) AS doctor_key,
-                    CASE WHEN pdf_download_first_ts IS NULL OR btrim(pdf_download_first_ts) = '' OR lower(btrim(pdf_download_first_ts)) = 'null' THEN NULL ELSE pdf_download_first_ts::date END AS event_date
+            fact_normalized AS (
+                SELECT
+                    COALESCE(NULLIF(doctor_master_id_resolved,''), doctor_identity_key, source_latest_transaction_id::text) AS doctor_key,
+                    CASE WHEN reached_first_ts IS NULL OR btrim(reached_first_ts) = '' OR lower(btrim(reached_first_ts)) = 'null' THEN NULL ELSE reached_first_ts::date END AS reached_first_date,
+                    CASE WHEN opened_first_ts IS NULL OR btrim(opened_first_ts) = '' OR lower(btrim(opened_first_ts)) = 'null' THEN NULL ELSE opened_first_ts::date END AS opened_first_date,
+                    CASE WHEN video_gt_50_first_ts IS NULL OR btrim(video_gt_50_first_ts) = '' OR lower(btrim(video_gt_50_first_ts)) = 'null' THEN NULL ELSE video_gt_50_first_ts::date END AS video_gt_50_first_date,
+                    CASE WHEN pdf_download_first_ts IS NULL OR btrim(pdf_download_first_ts) = '' OR lower(btrim(pdf_download_first_ts)) = 'null' THEN NULL ELSE pdf_download_first_ts::date END AS pdf_download_first_date
                 FROM {schema}.fact_doctor_collateral_latest
             ),
             anchor_date AS (
-                SELECT COALESCE(MAX(event_date), CURRENT_DATE)::date AS reference_date
-                FROM (
-                    SELECT event_date FROM reached_events
-                    UNION ALL
-                    SELECT event_date FROM opened_events WHERE event_date IS NOT NULL
-                    UNION ALL
-                    SELECT event_date FROM video_events WHERE event_date IS NOT NULL
-                    UNION ALL
-                    SELECT event_date FROM pdf_events WHERE event_date IS NOT NULL
-                ) u
+                SELECT COALESCE(MAX(COALESCE(reached_first_date, opened_first_date, video_gt_50_first_date, pdf_download_first_date)), CURRENT_DATE)::date AS reference_date
+                FROM fact_normalized
             ),
             month_bounds AS (
                 SELECT
@@ -166,26 +151,26 @@ def build_gold(run_id: str) -> None:
                         ((SELECT month_start FROM month_bounds) + ((gs * 7 - 1) * interval '1 day'))::date,
                         (SELECT month_end FROM month_bounds)
                     )::date AS week_end_date
-                FROM generate_series(1, 4) gs
+                FROM generate_series(
+                    1,
+                    GREATEST(
+                        1,
+                        CEIL(EXTRACT(DAY FROM (SELECT month_end FROM month_bounds)) / 7.0)::int
+                    )
+                ) gs
             ),
             agg AS (
                 SELECT
                     w.week_index,
                     w.week_start_date,
                     w.week_end_date,
-                    COUNT(DISTINCT r.doctor_key) FILTER (WHERE r.event_date BETWEEN w.week_start_date AND w.week_end_date) AS doctors_reached_unique,
-                    COUNT(DISTINCT o.doctor_key) FILTER (WHERE o.event_date BETWEEN w.week_start_date AND w.week_end_date) AS doctors_opened_unique,
-                    COUNT(DISTINCT v.doctor_key) FILTER (WHERE v.event_date BETWEEN w.week_start_date AND w.week_end_date) AS video_viewed_50_unique,
-                    COUNT(DISTINCT p.doctor_key) FILTER (WHERE p.event_date BETWEEN w.week_start_date AND w.week_end_date) AS pdf_download_unique,
-                    COUNT(DISTINCT COALESCE(v.doctor_key, p.doctor_key)) FILTER (
-                        WHERE (v.event_date BETWEEN w.week_start_date AND w.week_end_date)
-                           OR (p.event_date BETWEEN w.week_start_date AND w.week_end_date)
-                    ) AS doctors_consumed_unique
+                    COUNT(DISTINCT f.doctor_key) FILTER (WHERE f.reached_first_date BETWEEN w.week_start_date AND w.week_end_date) AS doctors_reached_unique,
+                    COUNT(DISTINCT f.doctor_key) FILTER (WHERE f.opened_first_date BETWEEN w.week_start_date AND w.week_end_date) AS doctors_opened_unique,
+                    COUNT(DISTINCT f.doctor_key) FILTER (WHERE f.video_gt_50_first_date BETWEEN w.week_start_date AND w.week_end_date) AS video_viewed_50_unique,
+                    COUNT(DISTINCT f.doctor_key) FILTER (WHERE f.pdf_download_first_date BETWEEN w.week_start_date AND w.week_end_date) AS pdf_download_unique,
+                    COUNT(DISTINCT f.doctor_key) FILTER (WHERE (f.video_gt_50_first_date BETWEEN w.week_start_date AND w.week_end_date) OR (f.pdf_download_first_date BETWEEN w.week_start_date AND w.week_end_date)) AS doctors_consumed_unique
                 FROM weeks w
-                LEFT JOIN reached_events r ON TRUE
-                LEFT JOIN opened_events o ON TRUE
-                LEFT JOIN video_events v ON TRUE
-                LEFT JOIN pdf_events p ON TRUE
+                LEFT JOIN fact_normalized f ON TRUE
                 GROUP BY w.week_index, w.week_start_date, w.week_end_date
             )
             SELECT
@@ -199,18 +184,18 @@ def build_gold(run_id: str) -> None:
                 pdf_download_unique,
                 doctors_consumed_unique,
                 b.total_doctors_in_campaign,
-                (b.total_doctors_in_campaign / 4.0) AS weekly_doctor_base,
-                LEAST(CASE WHEN b.total_doctors_in_campaign=0 THEN 0 ELSE doctors_reached_unique / NULLIF((b.total_doctors_in_campaign / 4.0),0) END, 1.0) AS weekly_reached_pct,
+                (b.total_doctors_in_campaign / GREATEST((SELECT COUNT(*) FROM weeks), 1)::numeric) AS weekly_doctor_base,
+                LEAST(CASE WHEN b.total_doctors_in_campaign=0 THEN 0 ELSE doctors_reached_unique / NULLIF((b.total_doctors_in_campaign / GREATEST((SELECT COUNT(*) FROM weeks), 1)::numeric),0) END, 1.0) AS weekly_reached_pct,
                 CASE WHEN doctors_reached_unique=0 THEN 0 ELSE doctors_opened_unique::numeric / doctors_reached_unique END AS weekly_opened_pct,
                 CASE WHEN doctors_opened_unique=0 THEN 0 ELSE doctors_consumed_unique::numeric / doctors_opened_unique END AS weekly_consumption_pct,
-                ((LEAST(CASE WHEN b.total_doctors_in_campaign=0 THEN 0 ELSE doctors_reached_unique / NULLIF((b.total_doctors_in_campaign / 4.0),0) END, 1.0)
+                ((LEAST(CASE WHEN b.total_doctors_in_campaign=0 THEN 0 ELSE doctors_reached_unique / NULLIF((b.total_doctors_in_campaign / GREATEST((SELECT COUNT(*) FROM weeks), 1)::numeric),0) END, 1.0)
                 + CASE WHEN doctors_reached_unique=0 THEN 0 ELSE doctors_opened_unique::numeric / doctors_reached_unique END
                 + CASE WHEN doctors_opened_unique=0 THEN 0 ELSE doctors_consumed_unique::numeric / doctors_opened_unique END) / 3.0) * 100 AS weekly_health_score,
                 CASE
-                    WHEN (((LEAST(CASE WHEN b.total_doctors_in_campaign=0 THEN 0 ELSE doctors_reached_unique / NULLIF((b.total_doctors_in_campaign / 4.0),0) END, 1.0)
+                    WHEN (((LEAST(CASE WHEN b.total_doctors_in_campaign=0 THEN 0 ELSE doctors_reached_unique / NULLIF((b.total_doctors_in_campaign / GREATEST((SELECT COUNT(*) FROM weeks), 1)::numeric),0) END, 1.0)
                     + CASE WHEN doctors_reached_unique=0 THEN 0 ELSE doctors_opened_unique::numeric / doctors_reached_unique END
                     + CASE WHEN doctors_opened_unique=0 THEN 0 ELSE doctors_consumed_unique::numeric / doctors_opened_unique END) / 3.0) * 100) < 40 THEN 'Red'
-                    WHEN (((LEAST(CASE WHEN b.total_doctors_in_campaign=0 THEN 0 ELSE doctors_reached_unique / NULLIF((b.total_doctors_in_campaign / 4.0),0) END, 1.0)
+                    WHEN (((LEAST(CASE WHEN b.total_doctors_in_campaign=0 THEN 0 ELSE doctors_reached_unique / NULLIF((b.total_doctors_in_campaign / GREATEST((SELECT COUNT(*) FROM weeks), 1)::numeric),0) END, 1.0)
                     + CASE WHEN doctors_reached_unique=0 THEN 0 ELSE doctors_opened_unique::numeric / doctors_reached_unique END
                     + CASE WHEN doctors_opened_unique=0 THEN 0 ELSE doctors_consumed_unique::numeric / doctors_opened_unique END) / 3.0) * 100) < 60 THEN 'Yellow'
                     ELSE 'Green'
@@ -218,7 +203,7 @@ def build_gold(run_id: str) -> None:
                 CASE WHEN b.total_doctors_in_campaign=0 THEN 1 ELSE 0 END AS insufficient_data_flag
             FROM agg CROSS JOIN base b
             """,
-            [brand_campaign_id, brand_campaign_id, brand_campaign_id],
+            [brand_campaign_id, brand_campaign_id],
         )
 
         execute(f"CREATE TABLE IF NOT EXISTS {schema}.weekly_action_items AS SELECT * FROM {schema}.kpi_weekly_summary WHERE false;")
