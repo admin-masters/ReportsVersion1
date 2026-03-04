@@ -90,10 +90,15 @@ def _campaign_list() -> list[dict[str, Any]]:
             SELECT
               r.brand_campaign_id,
               r.gold_schema_name,
-              COALESCE(MIN(NULLIF(s.collateral_title, '')), 'Campaign ' || r.brand_campaign_id) AS campaign_name
+              COALESCE(
+                MIN(NULLIF(cc.name, '')),
+                MIN(NULLIF(cm.name, '')),
+                'Campaign ' || r.brand_campaign_id
+              ) AS campaign_name
             FROM gold_global.campaign_registry r
             LEFT JOIN silver.map_brand_campaign_to_campaign m ON m.brand_campaign_id = r.brand_campaign_id
-            LEFT JOIN silver.bridge_campaign_collateral_schedule s ON s.campaign_id = m.campaign_id_resolved
+            LEFT JOIN bronze.campaign_campaign cc ON cc.id = m.campaign_id_resolved
+            LEFT JOIN bronze.campaign_management_campaign cm ON cm.brand_campaign_id = r.brand_campaign_id
             GROUP BY r.brand_campaign_id, r.gold_schema_name
             ORDER BY r.brand_campaign_id
             """
@@ -296,9 +301,10 @@ def _build_report_context(selected_campaign: str, week_filter: int | None = None
     error_message = None
     state_attention: list[dict[str, Any]] = []
     schedule_text = "Schedule unavailable"
-    collateral_name = "Collateral"
+    collateral_name = "N/A"
     brand_name = "Apex"
     brand_logo_text = "apex"
+    company_logo_url = None
 
     action_panel = {
         "primary_issue": "No issue detected",
@@ -365,7 +371,8 @@ def _build_report_context(selected_campaign: str, week_filter: int | None = None
                     END
                 ) AS schedule_end_date,
                 MIN(NULLIF(c.title, '')) AS collateral_title,
-                MIN(NULLIF(cm.brand_name, '')) AS brand_name
+                MIN(NULLIF(cm.brand_name, '')) AS brand_name,
+                MIN(NULLIF(cm.company_logo, '')) AS company_logo
             FROM bronze.campaign_management_campaign cm
             LEFT JOIN bronze.collateral_management_campaigncollateral cc ON cc.campaign_id = cm.id
             LEFT JOIN bronze.collateral_management_collateral c ON c.id = cc.collateral_id
@@ -380,6 +387,22 @@ def _build_report_context(selected_campaign: str, week_filter: int | None = None
                 schedule_text = f"{start} - {end}"
             collateral_name = schedule_rows[0].get("collateral_title") or collateral_name
             brand_name = schedule_rows[0].get("brand_name") or brand_name
+            company_logo_path = (schedule_rows[0].get("company_logo") or "").strip()
+            if company_logo_path:
+                company_logo_url = f"https://inclinic.inditech.co.in/media/{company_logo_path.lstrip('/')}"
+
+        if collateral_name in {"", "N/A", "Collateral"}:
+            fallback_collateral = _fetch_dicts(
+                """
+                SELECT MIN(NULLIF(c.title, '')) AS collateral_title
+                FROM silver.fact_collateral_transaction t
+                LEFT JOIN bronze.collateral_management_collateral c ON c.id = t.collateral_id
+                WHERE t.brand_campaign_id = %s
+                """,
+                [selected_campaign],
+            )
+            if fallback_collateral:
+                collateral_name = fallback_collateral[0].get("collateral_title") or collateral_name
 
         if weekly_rows:
             latest_week = weekly_rows[-1]
@@ -538,16 +561,56 @@ def _build_report_context(selected_campaign: str, week_filter: int | None = None
                 "video_pct": round(_safe_pct(_to_float(weekly_best.get("video_viewed_50_unique")), _to_float(weekly_best.get("doctors_opened_unique"))), 1),
                 "pdf_pct": round(_safe_pct(_to_float(weekly_best.get("pdf_download_unique")), _to_float(weekly_best.get("doctors_opened_unique"))), 1),
             }
+            benchmark_metric_rows = _fetch_dicts(
+                """
+                WITH recent_campaigns AS (
+                    SELECT DISTINCT brand_campaign_id
+                    FROM gold_global.campaign_health_history
+                    ORDER BY brand_campaign_id DESC
+                    LIMIT 10
+                ),
+                campaign_doctor_base AS (
+                    SELECT b.brand_campaign_id, COUNT(DISTINCT b.doctor_identity_key) AS total_doctors
+                    FROM silver.bridge_brand_campaign_doctor_base b
+                    JOIN recent_campaigns r ON r.brand_campaign_id = b.brand_campaign_id
+                    GROUP BY b.brand_campaign_id
+                ),
+                campaign_actions AS (
+                    SELECT
+                        a.brand_campaign_id,
+                        COUNT(DISTINCT a.doctor_identity_key) FILTER (WHERE NULLIF(a.reached_first_ts,'') IS NOT NULL) AS reached,
+                        COUNT(DISTINCT a.doctor_identity_key) FILTER (WHERE NULLIF(a.opened_first_ts,'') IS NOT NULL) AS opened,
+                        COUNT(DISTINCT a.doctor_identity_key) FILTER (WHERE NULLIF(a.video_gt_50_first_ts,'') IS NOT NULL) AS video,
+                        COUNT(DISTINCT a.doctor_identity_key) FILTER (WHERE NULLIF(a.pdf_download_first_ts,'') IS NOT NULL) AS pdf
+                    FROM silver.doctor_action_first_seen a
+                    JOIN recent_campaigns r ON r.brand_campaign_id = a.brand_campaign_id
+                    GROUP BY a.brand_campaign_id
+                )
+                SELECT
+                    AVG(CASE WHEN d.total_doctors=0 THEN 0 ELSE (x.reached::numeric / d.total_doctors) * 100 END) AS reached_pct,
+                    AVG(CASE WHEN x.reached=0 THEN 0 ELSE (x.opened::numeric / x.reached) * 100 END) AS opened_pct,
+                    AVG(CASE WHEN x.opened=0 THEN 0 ELSE (x.video::numeric / x.opened) * 100 END) AS video_pct,
+                    AVG(CASE WHEN x.opened=0 THEN 0 ELSE (x.pdf::numeric / x.opened) * 100 END) AS pdf_pct
+                FROM campaign_actions x
+                JOIN campaign_doctor_base d ON d.brand_campaign_id = x.brand_campaign_id
+                """
+            )
+            bm = benchmark_metric_rows[0] if benchmark_metric_rows else {}
+            benchmark_reached_pct = round(_to_float(bm.get("reached_pct")), 1)
+            benchmark_opened_pct = round(_to_float(bm.get("opened_pct")), 1)
+            benchmark_video_pct = round(_to_float(bm.get("video_pct")), 1)
+            benchmark_pdf_pct = round(_to_float(bm.get("pdf_pct")), 1)
+
             collateral_cards["benchmark"] = {
                 "title": "Benchmark Best (Last 10 Campaigns)",
-                "reached": _to_int(total_doctors * 0.46),
-                "opened": _to_int(total_doctors * 0.39),
-                "video": _to_int(total_doctors * 0.31),
-                "pdf": _to_int(total_doctors * 0.25),
-                "reached_pct": 46.0,
-                "opened_pct": 85.0,
-                "video_pct": 80.0,
-                "pdf_pct": 60.0,
+                "reached": _to_int((benchmark_reached_pct / 100.0) * total_doctors),
+                "opened": _to_int((benchmark_opened_pct / 100.0) * max(latest_reached, 1)),
+                "video": _to_int((benchmark_video_pct / 100.0) * max(latest_opened, 1)),
+                "pdf": _to_int((benchmark_pdf_pct / 100.0) * max(latest_opened, 1)),
+                "reached_pct": benchmark_reached_pct,
+                "opened_pct": benchmark_opened_pct,
+                "video_pct": benchmark_video_pct,
+                "pdf_pct": benchmark_pdf_pct,
                 "benchmark_health": round(benchmark_health, 1),
             }
 
@@ -591,6 +654,7 @@ def _build_report_context(selected_campaign: str, week_filter: int | None = None
         "selected_campaign": selected_campaign,
         "brand_name": brand_name,
         "brand_logo_text": brand_logo_text,
+        "company_logo_url": company_logo_url,
         "selected_schema": selected_schema,
         "weekly_rows": weekly_rows,
         "error_message": error_message,
