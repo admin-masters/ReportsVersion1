@@ -80,28 +80,27 @@ def _campaign_list() -> list[dict[str, Any]]:
     """
     try:
         with connection.cursor() as cursor:
-            cursor.execute("SELECT to_regclass('gold_global.campaign_registry')")
-            registry_exists = cursor.fetchone()[0] is not None
-        if not registry_exists:
+            cursor.execute("SELECT to_regclass('bronze.campaign_management_campaign')")
+            campaigns_exists = cursor.fetchone()[0] is not None
+        if not campaigns_exists:
             return []
 
         return _fetch_dicts(
             """
             SELECT
-              r.brand_campaign_id,
+              COALESCE(NULLIF(btrim(cm.brand_campaign_id), ''), cm.id::text) AS brand_campaign_id,
               r.gold_schema_name,
-              COALESCE(
-                NULLIF(hcmc.name, ''),
-                'Campaign ' || r.brand_campaign_id
-              ) AS campaign_name
-            FROM gold_global.campaign_registry r
-            LEFT JOIN healthcare_forms_2.campaign_management_campaign hcmc
-              ON hcmc.brand_campaign_id = r.brand_campaign_id
-            ORDER BY r.brand_campaign_id
+              COALESCE(NULLIF(cm.name, ''), 'Campaign ' || COALESCE(NULLIF(btrim(cm.brand_campaign_id), ''), cm.id::text)) AS campaign_name
+            FROM bronze.campaign_management_campaign cm
+            LEFT JOIN gold_global.campaign_registry r
+              ON r.brand_campaign_id = COALESCE(NULLIF(btrim(cm.brand_campaign_id), ''), cm.id::text)
+            WHERE COALESCE(NULLIF(btrim(cm.brand_campaign_id), ''), cm.id::text) IS NOT NULL
+            ORDER BY COALESCE(NULLIF(cm.name, ''), COALESCE(NULLIF(btrim(cm.brand_campaign_id), ''), cm.id::text))
             """
         )
     except (ProgrammingError, OperationalError):
         return []
+        
 def _table_exists(schema: str, table: str) -> bool:
     with connection.cursor() as cursor:
         cursor.execute("SELECT to_regclass(%s)", [f"{schema}.{table}"])
