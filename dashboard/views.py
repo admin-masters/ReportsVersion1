@@ -111,39 +111,43 @@ def _campaign_list() -> list[dict[str, Any]]:
 
         return _fetch_dicts(
             """
-            SELECT
-              r.brand_campaign_id,
-              r.gold_schema_name,
-              COALESCE(
-                MIN(
+            WITH campaign_candidates AS (
+                SELECT
+                  r.brand_campaign_id,
+                  r.gold_schema_name,
+                  MIN(
                     CASE
                         WHEN cm.name IS NULL OR btrim(cm.name) = '' OR lower(btrim(cm.name)) = 'null'
                         THEN NULL
                         ELSE cm.name
                     END
-                ),
-                MIN(NULLIF(cc.name, '')),
-                'Campaign ' || r.brand_campaign_id
-              ) AS campaign_name
-            FROM gold_global.campaign_registry r
-            LEFT JOIN silver.map_brand_campaign_to_campaign m ON m.brand_campaign_id = r.brand_campaign_id
-            LEFT JOIN bronze.campaign_campaign cc
-              ON cc.id::text = NULLIF(btrim(m.campaign_id_resolved), '')
-            LEFT JOIN bronze.campaign_management_campaign cm
-              ON regexp_replace(lower(btrim(cm.brand_campaign_id)), '-', '', 'g') = regexp_replace(lower(btrim(r.brand_campaign_id)), '-', '', 'g')
-              OR cm.id::text = btrim(r.brand_campaign_id)
-              OR cm.id::text = NULLIF(btrim(m.campaign_id_resolved), '')
-            GROUP BY r.brand_campaign_id, r.gold_schema_name
-            ORDER BY COALESCE(
-                MIN(
+                  ) AS cm_campaign_name,
+                  MIN(
                     CASE
-                        WHEN cm.name IS NULL OR btrim(cm.name) = '' OR lower(btrim(cm.name)) = 'null'
+                        WHEN cc.name IS NULL OR btrim(cc.name) = '' OR lower(btrim(cc.name)) = 'null'
                         THEN NULL
-                        ELSE cm.name
+                        ELSE cc.name
                     END
-                ),
-                r.brand_campaign_id
+                  ) AS cc_campaign_name
+                FROM gold_global.campaign_registry r
+                LEFT JOIN silver.map_brand_campaign_to_campaign m ON m.brand_campaign_id = r.brand_campaign_id
+                LEFT JOIN bronze.campaign_campaign cc
+                  ON cc.id::text = NULLIF(btrim(m.campaign_id_resolved), '')
+                LEFT JOIN bronze.campaign_management_campaign cm
+                  ON regexp_replace(lower(btrim(cm.brand_campaign_id)), '-', '', 'g') = regexp_replace(lower(btrim(r.brand_campaign_id)), '-', '', 'g')
+                  OR cm.id::text = btrim(r.brand_campaign_id)
+                  OR cm.id::text = NULLIF(btrim(m.campaign_id_resolved), '')
+                GROUP BY r.brand_campaign_id, r.gold_schema_name
             )
+            SELECT
+              brand_campaign_id,
+              gold_schema_name,
+              COALESCE(cm_campaign_name, cc_campaign_name) AS campaign_name
+            FROM campaign_candidates
+            WHERE COALESCE(cm_campaign_name, cc_campaign_name) IS NOT NULL
+              AND lower(COALESCE(cm_campaign_name, cc_campaign_name)) NOT LIKE 'test%'
+              AND lower(COALESCE(cm_campaign_name, cc_campaign_name)) NOT LIKE '%dummy%'
+            ORDER BY COALESCE(cm_campaign_name, cc_campaign_name)
             """
         )
     except (ProgrammingError, OperationalError):
