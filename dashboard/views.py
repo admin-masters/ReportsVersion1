@@ -76,6 +76,15 @@ def _normalize_campaign_id(value: Any) -> str:
     return str(value or "").strip()
 
 
+def _build_media_logo_url(company_logo_path: Any) -> str | None:
+    raw = str(company_logo_path or "").strip()
+    if not raw or raw.lower() == "null":
+        return None
+    if raw.startswith(("http://", "https://")):
+        return raw
+    return f"https://inclinic.inditech.co.in/media/{raw.lstrip('/')}"
+
+
 def _campaign_list() -> list[dict[str, Any]]:
     """Return campaign list for menu page.
 
@@ -440,12 +449,30 @@ def _build_report_context(selected_campaign: str, week_filter: int | None = None
                 schedule_text = f"{start} - {end}"
             collateral_name = schedule_rows[0].get("collateral_title") or collateral_name
             brand_name = schedule_rows[0].get("brand_name") or brand_name
-            company_logo_path = (schedule_rows[0].get("company_logo") or "").strip()
-            if company_logo_path:
-                if company_logo_path.startswith(("http://", "https://")):
-                    company_logo_url = company_logo_path
-                else:
-                    company_logo_url = f"https://inclinic.inditech.co.in/media/{company_logo_path.lstrip('/')}"
+            company_logo_url = _build_media_logo_url(schedule_rows[0].get("company_logo"))
+
+        if not company_logo_url:
+            fallback_logo = _fetch_dicts(
+                """
+                SELECT MIN(
+                    CASE
+                        WHEN cm.company_logo IS NULL OR btrim(cm.company_logo) = '' OR lower(btrim(cm.company_logo)) = 'null'
+                        THEN NULL
+                        ELSE cm.company_logo
+                    END
+                ) AS company_logo
+                FROM bronze.campaign_management_campaign cm
+                LEFT JOIN silver.map_brand_campaign_to_campaign m
+                  ON lower(btrim(m.brand_campaign_id)) = lower(btrim(%s))
+                WHERE
+                    lower(btrim(cm.brand_campaign_id)) = lower(btrim(%s))
+                    OR cm.id::text = btrim(%s)
+                    OR cm.id::text = NULLIF(btrim(m.campaign_id_resolved), '')
+                """,
+                [selected_campaign, selected_campaign, selected_campaign],
+            )
+            if fallback_logo:
+                company_logo_url = _build_media_logo_url(fallback_logo[0].get("company_logo"))
 
         if collateral_name in {"", "N/A", "Collateral"}:
             fallback_collateral = _fetch_dicts(
