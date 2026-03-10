@@ -455,7 +455,7 @@ erDiagram
 - **Purpose:** KPI and trend visualization for one campaign.
 - **User flow:** open campaign page, optionally choose week.
 - **Backend logic:** `_build_report_context` loads weekly rows, computes KPI percentages/colors/wow deltas, state attention rows, collateral comparison cards, and brand metadata.
-- **State attribution detail:** state fallback in dashboard queries now resolves from campaign fact state first, then campaign-doctor base, then doctor dimension, then field-rep mapping (`source_field_rep_id` with `id` fallback), then normalized raw `bronze.campaign_fieldrep.state` mapping by rep id. The query also backfills rep-id lookup via latest transaction rep assignment per doctor+campaign and uses alphanumeric-normalized matching to handle spacing/case/symbol differences (e.g., `FR-01` vs `fr01`).
+- **State attribution detail:** state fallback in dashboard queries now uses a campaign-scoped rep-state roster built from `campaign_campaignfieldrep` (campaign linkage) joined to `campaign_fieldrep` (state source), then falls back through fact/campaign-base/doctor/dim mappings and normalized global rep-id matches. The query also backfills rep-id lookup via latest transaction rep assignment per doctor+campaign and uses alphanumeric-normalized matching to handle spacing/case/symbol differences (e.g., `FR-01` vs `fr01`).
 - **DB interactions:** campaign-specific GOLD tables and related SILVER/BRONZE metadata joins.
 - **Frontend:** `overview.html`, `overview.css`, `overview.js` chart rendering.
 

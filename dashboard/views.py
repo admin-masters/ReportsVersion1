@@ -570,7 +570,23 @@ def _build_report_context(selected_campaign: str, week_filter: int | None = None
 
             state_rows = _fetch_dicts(
                 f"""
-                WITH rep_state AS (
+                WITH campaign_ref AS (
+                    SELECT DISTINCT NULLIF(btrim(m.campaign_id_resolved), '') AS campaign_id_resolved
+                    FROM silver.map_brand_campaign_to_campaign m
+                    WHERE lower(regexp_replace(btrim(m.brand_campaign_id), '[^a-zA-Z0-9]', '', 'g')) = lower(regexp_replace(btrim(%s), '[^a-zA-Z0-9]', '', 'g'))
+                ),
+                rep_state_campaign AS (
+                    SELECT DISTINCT
+                      lower(regexp_replace(btrim(ccf.field_rep_id::text), '[^a-zA-Z0-9]', '', 'g')) AS rep_key,
+                      initcap(btrim(cfr.state)) AS state_normalized
+                    FROM bronze.campaign_campaignfieldrep ccf
+                    JOIN campaign_ref cr ON cr.campaign_id_resolved = NULLIF(btrim(ccf.campaign_id), '')
+                    LEFT JOIN bronze.campaign_fieldrep cfr ON cfr.id::text = ccf.field_rep_id::text
+                    WHERE cfr.state IS NOT NULL
+                      AND btrim(cfr.state) <> ''
+                      AND lower(btrim(cfr.state)) <> 'null'
+                ),
+                rep_state_global AS (
                     SELECT DISTINCT
                       lower(regexp_replace(COALESCE(NULLIF(btrim(brand_supplied_field_rep_id), ''), btrim(id::text)), '[^a-zA-Z0-9]', '', 'g')) AS rep_key,
                       initcap(btrim(state)) AS state_normalized
@@ -578,17 +594,6 @@ def _build_report_context(selected_campaign: str, week_filter: int | None = None
                     WHERE state IS NOT NULL
                       AND btrim(state) <> ''
                       AND lower(btrim(state)) <> 'null'
-                    UNION
-                    SELECT DISTINCT
-                      lower(regexp_replace(COALESCE(NULLIF(btrim(ccf.field_rep_id), ''), btrim(ccf.id::text)), '[^a-zA-Z0-9]', '', 'g')) AS rep_key,
-                      initcap(btrim(ccf.state)) AS state_normalized
-                    FROM bronze.campaign_campaignfieldrep ccf
-                    LEFT JOIN silver.map_brand_campaign_to_campaign map
-                      ON NULLIF(btrim(map.campaign_id_resolved), '') = NULLIF(btrim(ccf.campaign_id), '')
-                    WHERE state IS NOT NULL
-                      AND btrim(state) <> ''
-                      AND lower(btrim(state)) <> 'null'
-                      AND lower(regexp_replace(btrim(map.brand_campaign_id), '[^a-zA-Z0-9]', '', 'g')) = lower(regexp_replace(btrim(%s), '[^a-zA-Z0-9]', '', 'g'))
                 ),
                 tx_rep AS (
                     SELECT DISTINCT ON (brand_campaign_id, doctor_identity_key)
@@ -607,8 +612,10 @@ def _build_report_context(selected_campaign: str, week_filter: int | None = None
                         NULLIF(btrim(base.state_normalized), ''),
                         NULLIF(btrim(d.state_normalized), ''),
                         NULLIF(btrim(fr.state_normalized), ''),
-                        NULLIF(btrim(rs_fact.state_normalized), ''),
-                        NULLIF(btrim(rs_tx.state_normalized), ''),
+                        NULLIF(btrim(rsc_fact.state_normalized), ''),
+                        NULLIF(btrim(rsg_fact.state_normalized), ''),
+                        NULLIF(btrim(rsc_tx.state_normalized), ''),
+                        NULLIF(btrim(rsg_tx.state_normalized), ''),
                         'UNKNOWN'
                       ) AS state_normalized,
                       f.reached_first_ts,
@@ -625,12 +632,21 @@ def _build_report_context(selected_campaign: str, week_filter: int | None = None
                     LEFT JOIN tx_rep tx
                       ON tx.brand_campaign_id = f.brand_campaign_id
                      AND tx.doctor_identity_key = f.doctor_identity_key
-                    LEFT JOIN rep_state rs_fact
-                      ON rs_fact.rep_key = lower(regexp_replace(NULLIF(btrim(f.field_rep_id_resolved), ''), '[^a-zA-Z0-9]', '', 'g'))
-                    LEFT JOIN rep_state rs_tx
-                      ON rs_tx.rep_key = lower(regexp_replace(NULLIF(btrim(tx.field_rep_id_resolved), ''), '[^a-zA-Z0-9]', '', 'g'))
+                    LEFT JOIN rep_state_campaign rsc_fact
+                      ON rsc_fact.rep_key = lower(regexp_replace(NULLIF(btrim(f.field_rep_id_resolved), ''), '[^a-zA-Z0-9]', '', 'g'))
+                    LEFT JOIN rep_state_global rsg_fact
+                      ON rsg_fact.rep_key = lower(regexp_replace(NULLIF(btrim(f.field_rep_id_resolved), ''), '[^a-zA-Z0-9]', '', 'g'))
+                    LEFT JOIN rep_state_campaign rsc_tx
+                      ON rsc_tx.rep_key = lower(regexp_replace(NULLIF(btrim(tx.field_rep_id_resolved), ''), '[^a-zA-Z0-9]', '', 'g'))
+                    LEFT JOIN rep_state_global rsg_tx
+                      ON rsg_tx.rep_key = lower(regexp_replace(NULLIF(btrim(tx.field_rep_id_resolved), ''), '[^a-zA-Z0-9]', '', 'g'))
                 ),
-                x AS (
+                state_universe AS (
+                    SELECT DISTINCT state_normalized FROM rep_state_campaign
+                    UNION
+                    SELECT DISTINCT state_normalized FROM fact_enriched WHERE state_normalized <> 'UNKNOWN'
+                ),
+                agg AS (
                     SELECT
                       state_normalized,
                       COUNT(DISTINCT doctor_identity_key) FILTER (
@@ -645,17 +661,21 @@ def _build_report_context(selected_campaign: str, week_filter: int | None = None
                     FROM fact_enriched
                     GROUP BY 1
                 )
-                SELECT state_normalized,reached,opened,total_state
-                FROM x
-                WHERE state_normalized <> 'UNKNOWN'
+                SELECT
+                  su.state_normalized,
+                  COALESCE(a.reached, 0) AS reached,
+                  COALESCE(a.opened, 0) AS opened,
+                  COALESCE(a.total_state, 0) AS total_state
+                FROM state_universe su
+                LEFT JOIN agg a ON a.state_normalized = su.state_normalized
                 ORDER BY
                   CASE
-                    WHEN reached=0 OR total_state=0 THEN 0
-                    ELSE ((LEAST((reached / NULLIF((total_state/4.0),0)),1.0)
-                      + (opened / NULLIF(reached,0))
-                      + (opened / NULLIF(opened,0))) / 3.0) * 100
+                    WHEN COALESCE(a.reached,0)=0 OR COALESCE(a.total_state,0)=0 THEN 0
+                    ELSE ((LEAST((COALESCE(a.reached,0) / NULLIF((COALESCE(a.total_state,0)/4.0),0)),1.0)
+                      + (COALESCE(a.opened,0) / NULLIF(COALESCE(a.reached,0),0))
+                      + (COALESCE(a.opened,0) / NULLIF(COALESCE(a.opened,0),0))) / 3.0) * 100
                   END ASC,
-                  state_normalized ASC
+                  su.state_normalized ASC
                 LIMIT 3
                 """,
                 [
