@@ -578,6 +578,7 @@ def _build_report_context(selected_campaign: str, week_filter: int | None = None
                         NULLIF(btrim(base.state_normalized), ''),
                         NULLIF(btrim(d.state_normalized), ''),
                         NULLIF(btrim(fr.state_normalized), ''),
+                        NULLIF(initcap(btrim(cfr.state)), ''),
                         'UNKNOWN'
                       ) AS state_normalized,
                       f.reached_first_ts,
@@ -590,6 +591,9 @@ def _build_report_context(selected_campaign: str, week_filter: int | None = None
                       ON d.doctor_identity_key = f.doctor_identity_key
                     LEFT JOIN silver.dim_field_rep fr
                       ON lower(COALESCE(NULLIF(btrim(fr.source_field_rep_id), ''), btrim(fr.id::text)))
+                       = lower(NULLIF(btrim(f.field_rep_id_resolved), ''))
+                    LEFT JOIN bronze.campaign_fieldrep cfr
+                      ON lower(COALESCE(NULLIF(btrim(cfr.brand_supplied_field_rep_id), ''), btrim(cfr.id::text)))
                        = lower(NULLIF(btrim(f.field_rep_id_resolved), ''))
                 ),
                 x AS (
