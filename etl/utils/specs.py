@@ -16,7 +16,6 @@ SOURCE_TABLE_SPECS = {
             "state",
         ],
         "campaign_campaignfieldrep": [
-            "state",
             "id",
             "field_rep_id",
             "created_at",
