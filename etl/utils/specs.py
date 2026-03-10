@@ -2,12 +2,18 @@
 
 SOURCE_TABLE_SPECS = {
     "mysql_server_1": {
-        "campaign_campaignfieldrep": [
-            "state",
+        "campaign_fieldrep": [
             "id",
-            "field_rep_id",
+            "full_name",
+            "phone_number",
+            "brand_supplied_field_rep_id",
+            "is_active",
+            "password_hash",
             "created_at",
-            "campaign_id",
+            "updated_at",
+            "brand_id",
+            "user_id",
+            "state",
         ],
         "campaign_campaign": [
             "updated_at",

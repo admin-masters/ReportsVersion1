@@ -13,28 +13,28 @@ def build_silver(run_id: str) -> None:
         CREATE TABLE silver.dim_field_rep AS
         SELECT
             id,
-            NULL::text AS full_name,
-            NULL::text AS phone_number,
-            field_rep_id AS brand_supplied_field_rep_id,
-            'true'::text AS is_active,
-            NULL::text AS password_hash,
+            full_name,
+            phone_number,
+            brand_supplied_field_rep_id,
+            CASE WHEN lower(COALESCE(is_active,'')) IN ('1','true','t','yes') THEN 'true' ELSE 'false' END AS is_active,
+            password_hash,
             created_at,
-            NULL::text AS updated_at,
-            NULL::text AS brand_id,
-            NULL::text AS user_id,
+            updated_at,
+            brand_id,
+            user_id,
             state,
-            regexp_replace(COALESCE(NULL::text,''), '[^0-9+]', '', 'g') AS field_rep_phone_normalized,
+            regexp_replace(COALESCE(phone_number,''), '[^0-9+]', '', 'g') AS field_rep_phone_normalized,
             NULL::text AS field_rep_email_best,
             COALESCE(NULLIF(initcap(trim(state)), ''), 'UNKNOWN') AS state_normalized,
-            'true'::text AS is_active_flag,
+            CASE WHEN lower(COALESCE(is_active,'')) IN ('1','true','t','yes') THEN 'true' ELSE 'false' END AS is_active_flag,
             created_at::text AS created_at_ts,
-            NULL::text AS updated_at_ts,
-            campaign_id AS campaign_id,
-            field_rep_id AS source_field_rep_id,
+            updated_at::text AS updated_at_ts,
+            NULL::text AS campaign_id,
+            COALESCE(NULLIF(brand_supplied_field_rep_id,''), id::text) AS source_field_rep_id,
             NOW()::text AS _silver_updated_at,
             'PASS'::text AS _dq_status,
             NULL::text AS _dq_errors
-        FROM bronze.campaign_campaignfieldrep
+        FROM bronze.campaign_fieldrep
         """
     )
 
