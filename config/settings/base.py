@@ -63,6 +63,9 @@ _load_dotenv()
 SECRET_KEY = _env("DJANGO_SECRET_KEY", default="dev-secret-key")
 DEBUG = _env("DJANGO_DEBUG", default="0") == "1"
 ALLOWED_HOSTS = ["*"]
+CSRF_TRUSTED_ORIGINS = [
+    "https://reports.cpdinclinic.co.in",
+]
 
 INSTALLED_APPS = [
     "django.contrib.admin",
