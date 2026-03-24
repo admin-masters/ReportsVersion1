@@ -1,1 +1,0 @@
-"""SAPA Growth upstream integrations."""
