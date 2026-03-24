@@ -9,6 +9,8 @@ DJANGO_SETTINGS_MODULE=${DJANGO_SETTINGS_MODULE:-config.settings.prod}
 ENV_FILE=${ENV_FILE:-/var/www/secrets/.env}
 RUN_ETL_ON_DEPLOY=${RUN_ETL_ON_DEPLOY:-1}
 RUN_ETL_CONTINUE_ON_ERROR=${RUN_ETL_CONTINUE_ON_ERROR:-1}
+RUN_SAPA_GROWTH_ETL_ON_DEPLOY=${RUN_SAPA_GROWTH_ETL_ON_DEPLOY:-0}
+RUN_SAPA_GROWTH_ETL_CONTINUE_ON_ERROR=${RUN_SAPA_GROWTH_ETL_CONTINUE_ON_ERROR:-1}
 GUNICORN_SERVICE=${GUNICORN_SERVICE:-gunicorn}
 
 cd "$PROJECT_DIR"
@@ -46,6 +48,8 @@ echo "[deploy] Runtime summary:"
 echo "         DJANGO_SETTINGS_MODULE=$DJANGO_SETTINGS_MODULE"
 echo "         POSTGRES_HOST=${POSTGRES_HOST:-${DB_HOST:-localhost}}"
 echo "         POSTGRES_PORT=${POSTGRES_PORT:-${DB_PORT:-5432}}"
+echo "         RUN_ETL_ON_DEPLOY=$RUN_ETL_ON_DEPLOY"
+echo "         RUN_SAPA_GROWTH_ETL_ON_DEPLOY=$RUN_SAPA_GROWTH_ETL_ON_DEPLOY"
 
 echo "[deploy] Running Django migrations with $DJANGO_SETTINGS_MODULE..."
 "$PYTHON" manage.py migrate --noinput --fake-initial
@@ -62,6 +66,20 @@ if [ "$RUN_ETL_ON_DEPLOY" = "1" ]; then
   fi
 else
   echo "[deploy] Skipping ETL (RUN_ETL_ON_DEPLOY=$RUN_ETL_ON_DEPLOY)"
+fi
+
+if [ "$RUN_SAPA_GROWTH_ETL_ON_DEPLOY" = "1" ]; then
+  echo "[deploy] Running SAPA Growth ETL..."
+  if ! "$PYTHON" manage.py run_sapa_growth_etl; then
+    if [ "$RUN_SAPA_GROWTH_ETL_CONTINUE_ON_ERROR" = "1" ]; then
+      echo "[deploy] WARNING: run_sapa_growth_etl failed, continuing because RUN_SAPA_GROWTH_ETL_CONTINUE_ON_ERROR=1"
+    else
+      echo "[deploy] ERROR: run_sapa_growth_etl failed. Set RUN_SAPA_GROWTH_ETL_CONTINUE_ON_ERROR=1 to continue deployment anyway."
+      exit 1
+    fi
+  fi
+else
+  echo "[deploy] Skipping SAPA Growth ETL (RUN_SAPA_GROWTH_ETL_ON_DEPLOY=$RUN_SAPA_GROWTH_ETL_ON_DEPLOY)"
 fi
 
 echo "[deploy] Collecting static files..."
