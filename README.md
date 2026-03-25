@@ -1,6 +1,6 @@
 # ReportsVersion1 — Reporting v2.1 Implementation
 
-This repository now contains a full Django + PostgreSQL medallion implementation for the In-Clinic Sharing System reporting pipeline.
+This repository now contains a full Django + PostgreSQL medallion implementation for the In-Clinic Sharing System and SAPA Growth Dashboard reporting pipeline.
 
 ## SAPA / ESAPA dashboard
 
