@@ -5,7 +5,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>{{ campaign_name }} | Patient Education Reporting</title>
-  <link rel="stylesheet" href="{% static 'pe_reports/css/dashboard.css' %}?v=20260327d">
+  <link rel="stylesheet" href="{% static 'pe_reports/css/dashboard.css' %}?v=20260327e">
 </head>
 <body class="pe-body">
   <form id="pdf-export-csrf" hidden>{% csrf_token %}</form>
@@ -22,7 +22,7 @@
         <div class="brand-lockup">
           <div class="brand-mark">{{ brand_name|default:campaign_name|slice:":2"|upper }}</div>
           <div>
-            <p class="eyebrow">{{ brand_name|default:"Patient Education" }}</p>
+            <p class="eyebrow">{{ brand_company_name|default:brand_name|default:"Patient Education" }}</p>
             <h1>Patient Education Reporting Dashboard</h1>
             <p class="subtext">{{ campaign_name }}</p>
           </div>
@@ -42,12 +42,12 @@
         </div>
         <div class="snapshot-grid">
           <div class="snapshot-card">
-            <span class="detail-kicker">Current Health</span>
+            <span class="detail-kicker">{{ selected_month_label|default:"Current Month" }} Health</span>
             <strong class="highlight-value">{{ summary.campaign_health_score|floatformat:0 }}<span>/100</span></strong>
-            <span class="highlight-note">Activation {{ summary.activation_pct|floatformat:1 }}% · Play {{ summary.play_rate_pct|floatformat:1 }}%</span>
+            <span class="highlight-note">{{ selected_month_label|default:"Current Month" }} · Activation {{ summary.activation_pct|floatformat:1 }}% · Play {{ summary.play_rate_pct|floatformat:1 }}%</span>
           </div>
           <div class="snapshot-card">
-            <span class="detail-kicker">Weekly Health</span>
+            <span class="detail-kicker">Latest Week In {{ selected_month_label|default:"Selected Month" }}</span>
             <strong class="highlight-value">{{ current_week.weekly_health_score|floatformat:0 }}<span>/100</span></strong>
             <span class="highlight-note">Week {{ current_week.week_index|default:"-" }} ending {{ current_week.week_end_date|default:"-" }}</span>
           </div>
@@ -72,15 +72,14 @@
           <p class="eyebrow">Global Filters</p>
           <h2>Filter The Dashboard</h2>
         </div>
-        <p class="helper-copy">Every card, ranking, detail page, and export respects the same query parameter state.</p>
+        <p class="helper-copy">The dashboard defaults to the latest month and keeps the weekly chart and table limited to the selected month.</p>
       </div>
       <form id="global-filters" method="get" class="filters-grid">
         <label>
-          <span>Week</span>
-          <select name="week">
-            <option value="">All Weeks</option>
-            {% for option in filter_options.weeks %}
-            <option value="{{ option.underlying_key }}" {% if filters.week == option.underlying_key %}selected{% endif %}>{{ option.display_label }}</option>
+          <span>Month</span>
+          <select name="month">
+            {% for option in filter_options.months %}
+            <option value="{{ option.underlying_key }}" {% if filters.month == option.underlying_key or selected_month == option.underlying_key %}selected{% endif %}>{{ option.display_label }}</option>
             {% endfor %}
           </select>
         </label>
@@ -164,14 +163,14 @@
 
     <section class="health-grid">
       <article class="score-card pe-surface {{ summary.health_color }}">
-        <div class="metric-label">Campaign Health</div>
+        <div class="metric-label">{{ selected_month_label|default:"Selected Month" }} Health</div>
         <div class="score-line"><strong>{{ summary.campaign_health_score|floatformat:0 }}</strong><span>/100</span></div>
         <p class="subtext">Activation {{ summary.activation_pct|floatformat:1 }}% · Play {{ summary.play_rate_pct|floatformat:1 }}%</p>
       </article>
       <article class="score-card pe-surface {{ current_week.health_color }}">
         <div class="metric-label">Weekly Campaign Health</div>
         <div class="score-line"><strong>{{ current_week.weekly_health_score|floatformat:0 }}</strong><span>/100</span></div>
-        <p class="subtext">Week {{ current_week.week_index|default:"-" }} ending {{ current_week.week_end_date|default:"-" }}</p>
+        <p class="subtext">{{ selected_month_label|default:"Selected Month" }} · Week {{ current_week.week_index|default:"-" }} ending {{ current_week.week_end_date|default:"-" }}</p>
       </article>
       <article class="panel attention-panel pe-surface">
         <div class="panel-title-row">
@@ -200,7 +199,7 @@
         <div class="panel-title-row">
           <div>
             <p class="eyebrow">Recommended Action</p>
-            <h3>Action Required This Week</h3>
+            <h3>Action Required This Month</h3>
           </div>
         </div>
         <p class="action-title">{{ action_row.primary_issue_title }}</p>
@@ -216,7 +215,7 @@
     <section class="section-block">
       <div class="section-head">
         <div>
-          <p class="eyebrow">Weekly Movement</p>
+          <p class="eyebrow">Monthly Scope</p>
           <h2>Sharing Performance</h2>
         </div>
       </div>
@@ -249,7 +248,7 @@
         <a class="metric-card compact pe-surface" href="{{ card.href }}">
           <div class="metric-card-top">
             <div class="metric-label">{{ card.title }}</div>
-            <span class="metric-chip">Weekly</span>
+            <span class="metric-chip">Month</span>
           </div>
           <div class="metric-value">{{ card.value }}</div>
           <div class="metric-delta {% if card.delta > 0 %}positive{% elif card.delta < 0 %}negative{% endif %}">
@@ -270,7 +269,7 @@
         </div>
         <div class="comparison-grid">
           <div class="comparison-card">
-            <p class="eyebrow">Current Campaign</p>
+            <p class="eyebrow">{{ selected_month_label|default:"Selected Month" }}</p>
             <p>Enrolled <strong>{{ comparison_cards.current.enrolled_doctors_current }}</strong></p>
             <p>Doctors Sharing <strong>{{ comparison_cards.current.doctors_sharing_unique_cumulative }}</strong></p>
             <p>Shares <strong>{{ comparison_cards.current.shares_total_cumulative }}</strong></p>
@@ -280,7 +279,7 @@
             <p>Health <strong>{{ comparison_cards.current.campaign_health_score|floatformat:1 }}</strong></p>
           </div>
           <div class="comparison-card">
-            <p class="eyebrow">Best Week</p>
+            <p class="eyebrow">Best Week In {{ selected_month_label|default:"Month" }}</p>
             <p>Enrolled <strong>{{ comparison_cards.best_week.enrolled_doctors_current|default:"0" }}</strong></p>
             <p>Doctors Sharing <strong>{{ comparison_cards.best_week.doctors_sharing_unique|default:"0" }}</strong></p>
             <p>Shares <strong>{{ comparison_cards.best_week.shares_total|default:"0" }}</strong></p>
@@ -308,10 +307,10 @@
         <div class="panel-title-row">
           <div>
             <p class="eyebrow">Visual Trend</p>
-            <h3>Weekly Health Components</h3>
+            <h3>Weekly Health Components In {{ selected_month_label|default:"Selected Month" }}</h3>
           </div>
         </div>
-        <p class="helper-copy chart-copy">A compact grouped column view compares the four health components week over week.</p>
+        <p class="helper-copy chart-copy">A compact grouped column view compares the four health components across the weeks inside the selected month.</p>
         <div class="chart-frame">
           <canvas id="trend-chart" height="240"></canvas>
         </div>
@@ -414,7 +413,7 @@
       <div class="panel-title-row">
         <div>
           <p class="eyebrow">Weekly Table</p>
-          <h3>Weekly KPI Table</h3>
+          <h3>{{ selected_month_label|default:"Selected Month" }} Weekly KPI Table</h3>
         </div>
       </div>
       <div class="table-wrap">

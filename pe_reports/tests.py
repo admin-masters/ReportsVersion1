@@ -9,6 +9,7 @@ from django.urls import resolve, reverse
 from etl.pe_reports.gold import build_benchmark_row, compute_health_components
 from etl.pe_reports.silver import attribute_share_row, match_campaign_doctors, rollup_share_funnel
 from etl.pe_reports.utils import week_end_saturday
+from pe_reports.reporting import build_dashboard_payload
 
 
 class PeReportsLogicTests(SimpleTestCase):
@@ -111,6 +112,26 @@ class PeReportsLogicTests(SimpleTestCase):
         self.assertEqual(row["campaign_count"], 2)
         self.assertEqual(row["avg_campaign_health_score"], 60.0)
 
+    def test_dashboard_payload_defaults_to_latest_month_and_limits_week_rows(self):
+        payload = build_dashboard_payload(
+            {"campaign_id_original": "camp-1", "start_date": "2026-02-01", "end_date": "2026-03-31", "local_video_cluster_name": "Bundle"},
+            {},
+            [
+                {"week_index": 1, "week_start_date": "2026-02-01", "week_end_date": "2026-02-07"},
+                {"week_index": 2, "week_start_date": "2026-02-08", "week_end_date": "2026-02-14"},
+                {"week_index": 5, "week_start_date": "2026-03-01", "week_end_date": "2026-03-07"},
+                {"week_index": 6, "week_start_date": "2026-03-08", "week_end_date": "2026-03-14"},
+            ],
+            {"campaign_id_original": "camp-1", "as_of_date": "2026-03-14"},
+            [{"doctor_key": "DOC-1", "enrolled_at_ts": "2026-02-03", "state": "MH", "field_rep_id_resolved": "FR-1"}],
+            [{"share_public_id": "SHARE-1", "doctor_key": "DOC-1", "shared_at_ts": "2026-03-10 10:00:00", "week_end_date": "2026-03-14", "recipient_reference": "R-1", "is_played": "true", "is_viewed_50": "true", "is_viewed_100": "false", "shared_item_type": "video"}],
+            [],
+            {"activation_pct": 40.0, "play_rate_pct": 40.0, "engagement_50_pct": 40.0, "completion_pct": 40.0},
+        )
+        self.assertEqual(payload["selected_month"], "2026-03")
+        self.assertEqual(len(payload["weekly_rows"]), 2)
+        self.assertEqual(payload["filters_query"], "month=2026-03")
+
 
 class PeReportsRoutingTests(SimpleTestCase):
     def test_routes_registered(self):
@@ -140,7 +161,7 @@ class PeReportsViewTests(SimpleTestCase):
             "ready": False,
             "campaign_id": "camp-1",
             "filters": {},
-            "filter_options": {"weeks": [], "states": [], "field_reps": [], "doctors": [], "languages": [], "share_types": [], "therapy_areas": [], "triggers": [], "bundles": []},
+            "filter_options": {"months": [], "states": [], "field_reps": [], "doctors": [], "languages": [], "share_types": [], "therapy_areas": [], "triggers": [], "bundles": []},
             "registry": {"campaign_name": "Campaign"},
             "refresh": {},
             "filters_query": "",

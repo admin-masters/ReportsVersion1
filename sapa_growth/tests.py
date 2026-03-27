@@ -175,11 +175,19 @@ class SapaGrowthRoutingTests(SimpleTestCase):
     def test_dashboard_route_registered(self):
         self.assertEqual(reverse("sapa_growth:dashboard"), "/sapa-growth/")
         self.assertEqual(resolve("/sapa-growth/").view_name, "sapa_growth:dashboard")
+        self.assertEqual(resolve("/sapa-growth/menu/").view_name, "sapa_growth:menu")
         self.assertEqual(resolve("/sapa-growth/login/").view_name, "sapa_growth:login")
+        self.assertEqual(resolve("/sapa-growth/access/").view_name, "sapa_growth:access")
         self.assertEqual(resolve("/sapa-growth/send-access-email/").view_name, "sapa_growth:send-access-email")
 
 
 class SapaGrowthAccessViewTests(SimpleTestCase):
+    def test_menu_page_renders(self):
+        with patch("sapa_growth.views._latest_refresh", return_value=None):
+            response = self.client.get("/sapa-growth/menu/")
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "SAPA Growth Clinic Program")
+
     def test_dashboard_redirects_to_login_when_unauthenticated(self):
         response = self.client.get("/sapa-growth/")
         self.assertEqual(response.status_code, 302)
@@ -197,6 +205,7 @@ class SapaGrowthAccessViewTests(SimpleTestCase):
                 {"recipient_email": "team@example.com"},
             )
         self.assertEqual(response.status_code, 302)
+        self.assertEqual(response["Location"], "/sapa-growth/access/")
         send_email_mock.assert_called_once()
 
 

@@ -1,0 +1,52 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{{ program_name }} | Launcher</title>
+  <link rel="stylesheet" href="{% static 'sapa_growth/css/dashboard.css' %}?v=20260327e">
+</head>
+<body class="sapa-body">
+  <main class="sapa-shell sapa-menu-shell">
+    {% if messages %}
+    <section class="filters-card flash-stack">
+      {% for message in messages %}
+      <div class="flash-message {% if message.tags %}flash-{{ message.tags }}{% endif %}">{{ message }}</div>
+      {% endfor %}
+    </section>
+    {% endif %}
+
+    <section class="sapa-header access-header">
+      <div>
+        <p class="eyebrow">Program Launcher</p>
+        <h1>{{ program_name }}</h1>
+        <p class="access-copy">Open the secured SAPA login flow or manage the access email history from a separate page, without mixing those actions together.</p>
+      </div>
+      <div class="header-meta">
+        <p><strong>Last Updated:</strong> {% if refresh %}{{ refresh.published_at|default:refresh.as_of_date|default:"Not published" }}{% else %}Not published{% endif %}</p>
+      </div>
+    </section>
+
+    <section class="launcher-grid">
+      <article class="list-card launcher-card">
+        <p class="eyebrow">Secure Entry</p>
+        <h3>Open Report Login</h3>
+        <p class="detail-meta">Use the program credentials shared by email to open the SAPA dashboard.</p>
+        <div class="launcher-actions">
+          <a class="download-button" href="{% url 'sapa_growth:login' %}">Open Secure Login</a>
+        </div>
+      </article>
+
+      <article class="list-card launcher-card">
+        <p class="eyebrow">Access Sharing</p>
+        <h3>Manage Access Email</h3>
+        <p class="detail-meta">Send the SAPA access link and credentials, and review the recent recipients list.</p>
+        <div class="launcher-actions">
+          <a class="ghost-button" href="{% url 'sapa_growth:access' %}">Manage Access Email</a>
+        </div>
+      </article>
+    </section>
+  </main>
+</body>
+</html>
