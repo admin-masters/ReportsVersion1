@@ -324,8 +324,8 @@ def reports_home(request: HttpRequest) -> HttpResponse:
         },
         {
             "label": "SAPA Growth Clinic",
-            "description": "Program access page for the SAPA dashboard, including secure login and email-based access sharing.",
-            "href": "/sapa-growth/login/",
+            "description": "Program launcher with separate secure login and access email management for the SAPA dashboard.",
+            "href": "/sapa-growth/menu/",
         },
     ]
     return render(request, "dashboard/home.html", {"report_cards": report_cards})
@@ -1022,4 +1022,3 @@ def export_report(request: HttpRequest, brand_campaign_id: str):
     context = _build_report_context(normalized_campaign_id, week_filter)
     context["export_mode"] = True
     return render(request, "dashboard/overview.html", context)
-

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
+from datetime import date, datetime, timedelta
 from typing import Any
 from urllib.parse import urlencode
 
@@ -21,17 +22,93 @@ def current_filters_query(filters: dict[str, str | None]) -> str:
     return urlencode({key: value for key, value in filters.items() if value})
 
 
-def selected_week_end(filters: dict[str, str | None], weekly_rows: list[dict[str, Any]]) -> str | None:
-    explicit = clean_text(filters.get("week"))
-    if explicit:
-        return explicit
-    if not weekly_rows:
+def _date_or_none(value: Any) -> date | None:
+    raw = clean_text(value)
+    if not raw:
         return None
-    latest = max(weekly_rows, key=lambda row: (clean_text(row.get("week_end_date")) or "", as_int(row.get("week_index"))))
-    return clean_text(latest.get("week_end_date"))
+    for chunk in (raw[:10], raw[:19], raw):
+        try:
+            return date.fromisoformat(chunk[:10])
+        except ValueError:
+            pass
+        try:
+            return datetime.fromisoformat(chunk.replace("Z", "+00:00")).date()
+        except ValueError:
+            continue
+    return None
 
 
-def apply_enrollment_filters(rows: list[dict[str, Any]], filters: dict[str, str | None], *, up_to_week_end: str | None = None) -> list[dict[str, Any]]:
+def _month_key(value: Any) -> str:
+    current = _date_or_none(value)
+    return current.strftime("%Y-%m") if current else ""
+
+
+def _month_bounds(month_key: str) -> tuple[date | None, date | None]:
+    normalized = clean_text(month_key)
+    if len(normalized) != 7:
+        return None, None
+    try:
+        start = date.fromisoformat(f"{normalized}-01")
+    except ValueError:
+        return None, None
+    next_month = (start.replace(day=28) + timedelta(days=4)).replace(day=1)
+    end = next_month - timedelta(days=1)
+    return start, end
+
+
+def month_label(month_key: str) -> str:
+    start, _ = _month_bounds(month_key)
+    return start.strftime("%b %Y") if start else month_key
+
+
+def month_filter_options(weekly_rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    grouped: dict[str, dict[str, Any]] = {}
+    for row in weekly_rows:
+        period_key = _month_key(row.get("week_end_date") or row.get("week_start_date"))
+        if not period_key:
+            continue
+        start_date = clean_text(row.get("week_start_date"))
+        end_date = clean_text(row.get("week_end_date"))
+        bucket = grouped.setdefault(
+            period_key,
+            {
+                "underlying_key": period_key,
+                "display_label": month_label(period_key),
+                "sort_key": period_key,
+                "week_count": 0,
+                "start_date": start_date,
+                "end_date": end_date,
+            },
+        )
+        bucket["week_count"] += 1
+        if start_date and (not bucket.get("start_date") or start_date < bucket["start_date"]):
+            bucket["start_date"] = start_date
+        if end_date and (not bucket.get("end_date") or end_date > bucket["end_date"]):
+            bucket["end_date"] = end_date
+    options = sorted(grouped.values(), key=lambda row: clean_text(row.get("sort_key")) or "", reverse=True)
+    for option in options:
+        option["display_label"] = f"{option['display_label']} ({option['week_count']} weeks)"
+    return options
+
+
+def selected_month_key(filters: dict[str, str | None], weekly_rows: list[dict[str, Any]]) -> str | None:
+    explicit = clean_text(filters.get("month"))
+    options = month_filter_options(weekly_rows)
+    valid_keys = {clean_text(option.get("underlying_key")) for option in options}
+    if explicit and explicit in valid_keys:
+        return explicit
+    if not options:
+        return None
+    return clean_text(options[0].get("underlying_key"))
+
+
+def filter_weekly_rows_by_month(weekly_rows: list[dict[str, Any]], month: str | None) -> list[dict[str, Any]]:
+    if not month:
+        return list(weekly_rows)
+    return [row for row in weekly_rows if _month_key(row.get("week_end_date") or row.get("week_start_date")) == month]
+
+
+def apply_enrollment_filters(rows: list[dict[str, Any]], filters: dict[str, str | None], *, up_to_period_end: str | None = None) -> list[dict[str, Any]]:
     state = clean_text(filters.get("state"))
     field_rep_id = clean_text(filters.get("field_rep_id"))
     doctor_key = clean_text(filters.get("doctor_key"))
@@ -43,7 +120,7 @@ def apply_enrollment_filters(rows: list[dict[str, Any]], filters: dict[str, str 
             continue
         if doctor_key and clean_text(row.get("doctor_key")) != doctor_key:
             continue
-        if up_to_week_end and clean_text(row.get("enrolled_at_ts")) and str(row.get("enrolled_at_ts"))[:10] > up_to_week_end:
+        if up_to_period_end and clean_text(row.get("enrolled_at_ts")) and str(row.get("enrolled_at_ts"))[:10] > up_to_period_end:
             continue
         output.append(row)
     return output
@@ -59,10 +136,14 @@ def apply_share_filters(rows: list[dict[str, Any]], filters: dict[str, str | Non
         "therapy_area": ("therapy_area_name",),
         "trigger": ("trigger_name",),
         "bundle": ("video_cluster_code",),
-        "week": ("week_end_date",),
     }
+    month = clean_text(filters.get("month"))
     output = []
     for row in rows:
+        if month:
+            row_month = _month_key(row.get("shared_at_ts")) or _month_key(row.get("week_end_date"))
+            if row_month != month:
+                continue
         keep = True
         for filter_key, row_keys in predicates.items():
             filter_value = clean_text(filters.get(filter_key))
@@ -200,14 +281,22 @@ def build_dashboard_payload(
     thresholds: dict[str, float],
     benchmark_best_row: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    selected_week = selected_week_end(filters, weekly_template_rows)
-    filtered_enrollment_rows = apply_enrollment_filters(enrollment_rows, filters, up_to_week_end=selected_week)
-    filtered_share_rows = apply_share_filters(share_rows, filters)
-    filtered_video_rows = apply_share_filters(video_rows, filters)
+    selected_month = selected_month_key(filters, weekly_template_rows)
+    effective_filters = dict(filters)
+    if selected_month:
+        effective_filters["month"] = selected_month
+    _, selected_month_end = _month_bounds(selected_month or "")
+    visible_week_rows = filter_weekly_rows_by_month(weekly_template_rows, selected_month)
+    filtered_enrollment_rows = apply_enrollment_filters(
+        enrollment_rows,
+        effective_filters,
+        up_to_period_end=selected_month_end.isoformat() if selected_month_end else None,
+    )
+    filtered_share_rows = apply_share_filters(share_rows, effective_filters)
+    filtered_video_rows = apply_share_filters(video_rows, effective_filters)
 
-    weekly_rows_all = recompute_weekly_rows(campaign, weekly_template_rows, filtered_enrollment_rows, filtered_share_rows)
-    visible_weekly_rows = [row for row in weekly_rows_all if not selected_week or clean_text(row.get("week_end_date")) == selected_week]
-    current_week_row = visible_weekly_rows[-1] if visible_weekly_rows else (weekly_rows_all[-1] if weekly_rows_all else {})
+    weekly_rows_all = recompute_weekly_rows(campaign, visible_week_rows, filtered_enrollment_rows, filtered_share_rows)
+    current_week_row = weekly_rows_all[-1] if weekly_rows_all else {}
     current_week_end = clean_text((current_week_row or {}).get("week_end_date"))
     state_rows_all = _state_summary_rows(filtered_enrollment_rows, filtered_share_rows, weekly_rows_all)
     rep_rows_all = _field_rep_summary_rows(filtered_enrollment_rows, filtered_share_rows, weekly_rows_all, {})
@@ -240,9 +329,11 @@ def build_dashboard_payload(
     bundle_rankings = _bundle_rankings(filtered_share_rows)
 
     return {
-        "selected_week": selected_week,
+        "selected_month": selected_month,
+        "selected_month_label": month_label(selected_month or "") if selected_month else "",
+        "month_options": month_filter_options(weekly_template_rows),
         "weekly_rows_all": weekly_rows_all,
-        "weekly_rows": visible_weekly_rows if selected_week else weekly_rows_all,
+        "weekly_rows": weekly_rows_all,
         "current_week_row": current_week_row,
         "campaign_summary": summary_row,
         "state_attention_rows": state_attention_rows[:3],
@@ -261,7 +352,7 @@ def build_dashboard_payload(
         "filtered_enrollment_rows": filtered_enrollment_rows,
         "filtered_video_rows": filtered_video_rows,
         "doctor_activity_rows": _doctor_activity_rows(filtered_enrollment_rows, filtered_share_rows),
-        "filters_query": current_filters_query(filters),
+        "filters_query": current_filters_query(effective_filters),
     }
 
 
