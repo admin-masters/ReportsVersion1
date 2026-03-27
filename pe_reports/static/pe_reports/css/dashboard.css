@@ -771,6 +771,12 @@ code {
   font-size: 0.82rem;
 }
 
+.table-subcopy {
+  margin-top: 4px;
+  color: var(--pe-muted);
+  font-size: 0.82rem;
+}
+
 .health-chip {
   display: inline-flex;
   align-items: center;

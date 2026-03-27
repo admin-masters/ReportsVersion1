@@ -1,0 +1,69 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{{ program_name }} | Access Email</title>
+  <link rel="stylesheet" href="{% static 'sapa_growth/css/dashboard.css' %}?v=20260327e">
+</head>
+<body class="sapa-body">
+  <main class="sapa-shell">
+    {% if messages %}
+    <section class="filters-card flash-stack">
+      {% for message in messages %}
+      <div class="flash-message {% if message.tags %}flash-{{ message.tags }}{% endif %}">{{ message }}</div>
+      {% endfor %}
+    </section>
+    {% endif %}
+
+    <section class="sapa-header access-header">
+      <div>
+        <p class="eyebrow">Program Access</p>
+        <h1>{{ program_name }}</h1>
+        <p class="access-copy">Send the SAPA report link and credentials from this page and review who has already received access.</p>
+      </div>
+      <div class="header-meta">
+        <a class="download-button" href="{% url 'sapa_growth:login' %}">Open Secure Login</a>
+        <a class="ghost-button" href="{% url 'sapa_growth:menu' %}">Back to SAPA Launcher</a>
+      </div>
+    </section>
+
+    <section class="access-grid">
+      <article class="filters-card access-form-card">
+        <div class="access-panel-copy">
+          <p class="eyebrow">Send Access</p>
+          <h3>Share This Program</h3>
+          <p class="detail-meta">Enter one receiver email to send the SAPA report link and credentials.</p>
+        </div>
+        <form method="post" action="{% url 'sapa_growth:send-access-email' %}" class="access-form">
+          {% csrf_token %}
+          <label>
+            <span>Receiver Email</span>
+            <input type="email" name="recipient_email" placeholder="name@company.com" autocomplete="email" required>
+          </label>
+          <button type="submit" class="download-button">Send Access Email</button>
+        </form>
+      </article>
+
+      <article class="list-card access-form-card">
+        <p class="eyebrow">Sent History</p>
+        <h3>Previous Recipients</h3>
+        <div class="access-history-list">
+          {% for row in history_rows %}
+          <div class="access-history-row">
+            <div>
+              <strong>{{ row.recipient_email }}</strong>
+              <p class="detail-meta">{{ row.sent_at }}</p>
+            </div>
+            <span class="access-status">Sent</span>
+          </div>
+          {% empty %}
+          <p class="empty-copy">No access emails have been logged for SAPA yet.</p>
+          {% endfor %}
+        </div>
+      </article>
+    </section>
+  </main>
+</body>
+</html>

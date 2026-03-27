@@ -5,6 +5,7 @@ from django.http import HttpRequest, HttpResponse
 from django.shortcuts import redirect, render
 
 from sapa_growth.services import (
+    _latest_refresh,
     certified_context,
     dashboard_context,
     detail_context,
@@ -14,10 +15,21 @@ from sapa_growth.services import (
     parse_certified_filters,
     parse_global_filters,
 )
-from reporting.access import absolute_url, authenticate_session, build_report_access, is_authenticated, send_access_email, validate_credentials
+from reporting.access import absolute_url, access_email_history, authenticate_session, build_report_access, is_authenticated, send_access_email, validate_credentials
 
 
 SAPA_SCOPE_KEY = "growth-clinic"
+
+
+def menu(request: HttpRequest) -> HttpResponse:
+    return render(
+        request,
+        "sapa_growth/menu.html",
+        {
+            "program_name": "SAPA Growth Clinic Program",
+            "refresh": _latest_refresh(),
+        },
+    )
 
 
 def login(request: HttpRequest) -> HttpResponse:
@@ -43,9 +55,20 @@ def login(request: HttpRequest) -> HttpResponse:
     )
 
 
+def access_page(request: HttpRequest) -> HttpResponse:
+    return render(
+        request,
+        "sapa_growth/access.html",
+        {
+            "program_name": "SAPA Growth Clinic Program",
+            "history_rows": access_email_history("sapa", "sapa-growth"),
+        },
+    )
+
+
 def send_access_email_view(request: HttpRequest) -> HttpResponse:
     if request.method != "POST":
-        return redirect("sapa_growth:login")
+        return redirect("sapa_growth:access")
     recipient_email = request.POST.get("recipient_email", "")
     try:
         access = absolute_url(request, "/sapa-growth/login/")
@@ -63,10 +86,10 @@ def send_access_email_view(request: HttpRequest) -> HttpResponse:
         )
     except Exception as exc:
         messages.error(request, f"SAPA access email could not be sent: {exc}")
-        return redirect("sapa_growth:login")
+        return redirect("sapa_growth:access")
 
     messages.success(request, f"SAPA access email sent to {(recipient_email or '').strip()}.")
-    return redirect("sapa_growth:login")
+    return redirect("sapa_growth:access")
 
 
 def dashboard(request: HttpRequest) -> HttpResponse:

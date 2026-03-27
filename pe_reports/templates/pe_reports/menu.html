@@ -5,7 +5,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Patient Education Reports</title>
-  <link rel="stylesheet" href="{% static 'pe_reports/css/dashboard.css' %}?v=20260327d">
+  <link rel="stylesheet" href="{% static 'pe_reports/css/dashboard.css' %}?v=20260327e">
 </head>
 <body class="pe-body">
   <main class="pe-shell pe-menu-shell">
@@ -45,7 +45,7 @@
           <thead>
             <tr>
               <th>Campaign</th>
-              <th>Brand</th>
+              <th>Brand / Company</th>
               <th>Action</th>
             </tr>
           </thead>
@@ -56,7 +56,10 @@
                 <strong>{{ campaign.campaign_name }}</strong>
                 <div class="subtle-code">{{ campaign.campaign_id }}</div>
               </td>
-              <td>{{ campaign.brand_name|default:"-" }}</td>
+              <td>
+                <strong>{{ campaign.brand_company_name|default:campaign.brand_name|default:"-" }}</strong>
+                <div class="table-subcopy">Brand record</div>
+              </td>
               <td>
                 <div class="access-action-stack">
                   <a class="action-link-button" href="{{ campaign.href }}">Open Secure Login</a>

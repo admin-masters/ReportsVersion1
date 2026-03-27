@@ -5,7 +5,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>{{ title }} | Patient Education</title>
-  <link rel="stylesheet" href="{% static 'pe_reports/css/dashboard.css' %}?v=20260327d">
+  <link rel="stylesheet" href="{% static 'pe_reports/css/dashboard.css' %}?v=20260327e">
 </head>
 <body class="pe-body">
   <main class="pe-shell">
@@ -29,7 +29,7 @@
         </div>
         <div class="summary-item summary-wide">
           <span class="detail-kicker">Filters</span>
-          <p>Week={{ filters.week|default:"All" }}, State={{ filters.state|default:"All" }}, Field Rep={{ filters.field_rep_id|default:"All" }}, Doctor={{ filters.doctor_key|default:"All" }}, Language={{ filters.language_code|default:"All" }}</p>
+          <p>Month={% if selected_month_label %}{{ selected_month_label }}{% elif filters.month %}{{ filters.month }}{% else %}Latest{% endif %}, State={{ filters.state|default:"All" }}, Field Rep={{ filters.field_rep_id|default:"All" }}, Doctor={{ filters.doctor_key|default:"All" }}, Language={{ filters.language_code|default:"All" }}</p>
         </div>
       </div>
     </section>
