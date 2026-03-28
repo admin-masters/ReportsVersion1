@@ -7,7 +7,7 @@ from django.test import RequestFactory, SimpleTestCase
 from django.urls import resolve, reverse
 
 from etl.pe_reports.gold import build_benchmark_row, compute_health_components
-from etl.pe_reports.silver import attribute_share_row, match_campaign_doctors, rollup_share_funnel
+from etl.pe_reports.silver import attribute_banner_click_row, attribute_share_row, match_campaign_doctors, rollup_share_funnel
 from etl.pe_reports.utils import clean_text, week_end_saturday
 from pe_reports.reporting import build_dashboard_payload
 
@@ -51,6 +51,46 @@ class PeReportsLogicTests(SimpleTestCase):
         )
         self.assertEqual(result["campaign_attribution_method"], "ambiguous_video")
         self.assertEqual(result["is_campaign_attributed_flag"], "false")
+
+    def test_banner_click_prefers_matching_banner_target_url(self):
+        result = attribute_banner_click_row(
+            {
+                "doctor_key": "DOC-1",
+                "doctor_id": "DOC-1",
+                "banner_target_url": "https://example.com/alpha/",
+                "clicked_at_ts": "2026-03-20 10:00:00",
+            },
+            campaigns_by_doctor={"DOC-1": ["camp-a", "camp-b"]},
+            campaign_by_id={
+                "camp-a": {"campaign_id_original": "camp-a", "campaign_id_normalized": "camp-a", "start_date": "2026-03-01", "end_date": "2026-04-01"},
+                "camp-b": {"campaign_id_original": "camp-b", "campaign_id_normalized": "camp-b", "start_date": "2026-03-01", "end_date": "2026-04-01"},
+            },
+            campaigns_by_banner_target_url={
+                "https://example.com/alpha": ["camp-a"],
+                "https://example.com/beta": ["camp-b"],
+            },
+        )
+        self.assertEqual(result["campaign_id_normalized"], "camp-a")
+        self.assertEqual(result["campaign_attribution_method"], "banner_target_url")
+        self.assertEqual(result["is_campaign_attributed_flag"], "true")
+
+    def test_banner_click_falls_back_to_single_active_doctor_campaign(self):
+        result = attribute_banner_click_row(
+            {
+                "doctor_key": "DOC-1",
+                "doctor_id": "DOC-1",
+                "banner_target_url": "",
+                "clicked_at_ts": "2026-03-20 10:00:00",
+            },
+            campaigns_by_doctor={"DOC-1": ["camp-a"]},
+            campaign_by_id={
+                "camp-a": {"campaign_id_original": "camp-a", "campaign_id_normalized": "camp-a", "start_date": "2026-03-01", "end_date": "2026-04-01"},
+            },
+            campaigns_by_banner_target_url={},
+        )
+        self.assertEqual(result["campaign_id_normalized"], "camp-a")
+        self.assertEqual(result["campaign_attribution_method"], "doctor_active_campaign")
+        self.assertEqual(result["is_campaign_attributed_flag"], "true")
 
     def test_rollup_keeps_orphan_playback_outside_share_funnel_and_counts_any_video_threshold_once(self):
         rolled = rollup_share_funnel(
