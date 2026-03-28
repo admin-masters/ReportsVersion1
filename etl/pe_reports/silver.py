@@ -238,6 +238,28 @@ SILVER_DEFAULT_COLUMNS: dict[str, list[str]] = {
         "_dq_status",
         "_dq_errors",
     ],
+    "fact_share_banner_click": [
+        "source_banner_click_id",
+        "doctor_summary_id",
+        "doctor_id",
+        "doctor_key",
+        "page_type",
+        "banner_id",
+        "banner_name",
+        "banner_target_url",
+        "clicked_at_ts",
+        "campaign_id_original",
+        "campaign_id_normalized",
+        "campaign_attribution_method",
+        "is_campaign_attributed_flag",
+        "city",
+        "district",
+        "state",
+        "field_rep_id_resolved",
+        "field_rep_external_id",
+        "_dq_status",
+        "_dq_errors",
+    ],
     "fact_share_funnel_first_seen": [
         "share_public_id",
         "campaign_id_original",
@@ -522,6 +544,93 @@ def attribute_share_row(
     }
 
 
+def _normalized_banner_url(value: Any) -> str | None:
+    url = clean_text(value)
+    if not url:
+        return None
+    return url.rstrip("/") or url
+
+
+def _valid_doctor_identifier(value: Any) -> str | None:
+    text = clean_text(value)
+    if text in {None, "", "0", "0.0"}:
+        return None
+    return text
+
+
+def attribute_banner_click_row(
+    banner_click_row: dict[str, Any],
+    *,
+    campaigns_by_doctor: dict[str, list[str]],
+    campaign_by_id: dict[str, dict[str, Any]],
+    campaigns_by_banner_target_url: dict[str, list[str]],
+) -> dict[str, str | None]:
+    doctor_key = clean_text(banner_click_row.get("doctor_key")) or clean_text(banner_click_row.get("doctor_id"))
+    clicked_at = clean_text(banner_click_row.get("clicked_at_ts")) or clean_text(banner_click_row.get("clicked_at"))
+    banner_target_url = _normalized_banner_url(banner_click_row.get("banner_target_url"))
+
+    if banner_target_url:
+        eligible_campaigns = []
+        for campaign_id_normalized in campaigns_by_banner_target_url.get(banner_target_url, []):
+            campaign = campaign_by_id.get(campaign_id_normalized)
+            if doctor_key and campaign_id_normalized not in campaigns_by_doctor.get(doctor_key or "", []):
+                continue
+            if not _campaign_active_for_date(campaign, clicked_at):
+                continue
+            eligible_campaigns.append(campaign_id_normalized)
+        candidate_campaigns = unique_preserving_order(eligible_campaigns)
+        if len(candidate_campaigns) == 1:
+            campaign = campaign_by_id.get(candidate_campaigns[0], {})
+            return {
+                "campaign_id_original": clean_text(campaign.get("campaign_id_original")),
+                "campaign_id_normalized": clean_text(campaign.get("campaign_id_normalized")),
+                "campaign_attribution_method": "banner_target_url",
+                "is_campaign_attributed_flag": "true",
+                "dq_error": "",
+            }
+        if len(candidate_campaigns) > 1:
+            return {
+                "campaign_id_original": None,
+                "campaign_id_normalized": None,
+                "campaign_attribution_method": "ambiguous_banner_target_url",
+                "is_campaign_attributed_flag": "false",
+                "dq_error": "ambiguous_banner_target_url",
+            }
+
+    doctor_campaigns = unique_preserving_order(
+        [
+            campaign_id_normalized
+            for campaign_id_normalized in campaigns_by_doctor.get(doctor_key or "", [])
+            if _campaign_active_for_date(campaign_by_id.get(campaign_id_normalized), clicked_at)
+        ]
+    )
+    if len(doctor_campaigns) == 1:
+        campaign = campaign_by_id.get(doctor_campaigns[0], {})
+        return {
+            "campaign_id_original": clean_text(campaign.get("campaign_id_original")),
+            "campaign_id_normalized": clean_text(campaign.get("campaign_id_normalized")),
+            "campaign_attribution_method": "doctor_active_campaign",
+            "is_campaign_attributed_flag": "true",
+            "dq_error": "",
+        }
+    if len(doctor_campaigns) > 1:
+        return {
+            "campaign_id_original": None,
+            "campaign_id_normalized": None,
+            "campaign_attribution_method": "ambiguous_doctor_campaign",
+            "is_campaign_attributed_flag": "false",
+            "dq_error": "ambiguous_doctor_campaign",
+        }
+
+    return {
+        "campaign_id_original": None,
+        "campaign_id_normalized": None,
+        "campaign_attribution_method": "unattributed_banner_click",
+        "is_campaign_attributed_flag": "false",
+        "dq_error": "banner_click_not_campaign_attributed",
+    }
+
+
 def rollup_share_funnel(
     share_rows: list[dict[str, Any]],
     playback_rows: list[dict[str, Any]],
@@ -620,6 +729,7 @@ def build_silver(run_id: str) -> dict[str, Any]:
     share_summary_rows = fetch_table(BRONZE_SCHEMA, "sharing_doctorsharesummary")
     share_rows = fetch_table(BRONZE_SCHEMA, "sharing_shareactivity")
     playback_rows = fetch_table(BRONZE_SCHEMA, "sharing_shareplaybackevent")
+    banner_click_rows = fetch_table(BRONZE_SCHEMA, "sharing_sharebannerclickevent")
 
     brands_by_id = {clean_text(row.get("id")): row for row in brand_rows if clean_text(row.get("id"))}
     therapy_by_id = {clean_text(row.get("id")): row for row in therapy_rows if clean_text(row.get("id"))}
@@ -893,6 +1003,12 @@ def build_silver(run_id: str) -> dict[str, Any]:
         issues["publisher_campaign_without_system_pe"] += 1
 
     campaign_by_id = {clean_text(row.get("campaign_id_normalized")): row for row in dim_campaign_rows if clean_text(row.get("campaign_id_normalized"))}
+    campaigns_by_banner_target_url: dict[str, list[str]] = defaultdict(list)
+    for campaign in dim_campaign_rows:
+        banner_target_url = _normalized_banner_url(campaign.get("banner_target_url"))
+        campaign_id_normalized = clean_text(campaign.get("campaign_id_normalized"))
+        if banner_target_url and campaign_id_normalized:
+            campaigns_by_banner_target_url[banner_target_url].append(campaign_id_normalized)
     campaign_by_cluster_code: dict[str, list[str]] = defaultdict(list)
     bridge_campaign_content_rows: list[dict[str, Any]] = []
     campaign_videos_by_campaign: dict[str, set[str]] = defaultdict(set)
@@ -1138,6 +1254,67 @@ def build_silver(run_id: str) -> dict[str, Any]:
             }
         )
 
+    share_summary_by_id = {
+        clean_text(row.get("id")): row
+        for row in share_summary_rows
+        if clean_text(row.get("id"))
+    }
+
+    banner_click_rows_enriched: list[dict[str, Any]] = []
+    for row in banner_click_rows:
+        doctor_summary_id = clean_text(row.get("doctor_summary_id"))
+        share_summary = share_summary_by_id.get(doctor_summary_id or "", {})
+        doctor_id = _valid_doctor_identifier(row.get("doctor_id")) or clean_text((share_summary or {}).get("doctor_id"))
+        doctor = doctor_by_key.get(doctor_id or "")
+        attribution = attribute_banner_click_row(
+            {
+                "doctor_key": clean_text((doctor or {}).get("doctor_key")) or doctor_id,
+                "doctor_id": doctor_id,
+                "banner_target_url": row.get("banner_target_url"),
+                "clicked_at_ts": iso_datetime(row.get("clicked_at")),
+            },
+            campaigns_by_doctor=campaigns_by_doctor,
+            campaign_by_id=campaign_by_id,
+            campaigns_by_banner_target_url=campaigns_by_banner_target_url,
+        )
+        dq_errors = []
+        if not doctor_id:
+            dq_errors.append("missing_doctor_id")
+            issues["banner_click_missing_doctor_id"] += 1
+        if clean_text(attribution.get("dq_error")):
+            dq_errors.append(clean_text(attribution.get("dq_error")))
+            if attribution.get("campaign_attribution_method") == "ambiguous_banner_target_url":
+                issues["ambiguous_banner_click_attribution"] += 1
+            elif attribution.get("campaign_attribution_method") == "ambiguous_doctor_campaign":
+                issues["ambiguous_banner_click_attribution"] += 1
+            else:
+                issues["unattributed_banner_clicks"] += 1
+
+        banner_click_rows_enriched.append(
+            {
+                "source_banner_click_id": clean_text(row.get("id")),
+                "doctor_summary_id": doctor_summary_id,
+                "doctor_id": doctor_id,
+                "doctor_key": clean_text((doctor or {}).get("doctor_key")) or doctor_id,
+                "page_type": clean_text(row.get("page_type")),
+                "banner_id": clean_text(row.get("banner_id")),
+                "banner_name": clean_text(row.get("banner_name")),
+                "banner_target_url": clean_text(row.get("banner_target_url")),
+                "clicked_at_ts": iso_datetime(row.get("clicked_at")),
+                "campaign_id_original": clean_text(attribution.get("campaign_id_original")),
+                "campaign_id_normalized": clean_text(attribution.get("campaign_id_normalized")),
+                "campaign_attribution_method": clean_text(attribution.get("campaign_attribution_method")),
+                "is_campaign_attributed_flag": clean_text(attribution.get("is_campaign_attributed_flag")) or "false",
+                "city": clean_text((doctor or {}).get("city")),
+                "district": clean_text((doctor or {}).get("district")),
+                "state": clean_text((doctor or {}).get("state")),
+                "field_rep_id_resolved": clean_text((doctor or {}).get("field_rep_id_resolved")),
+                "field_rep_external_id": clean_text((doctor or {}).get("field_rep_external_id")),
+                "_dq_status": "PASS" if not dq_errors else "WARN",
+                "_dq_errors": ",".join(error for error in dq_errors if error),
+            }
+        )
+
     funnel_rows = rollup_share_funnel(share_rows_enriched, playback_rows_enriched)
 
     playback_by_share_video: dict[tuple[str, str], list[dict[str, Any]]] = defaultdict(list)
@@ -1275,6 +1452,7 @@ def build_silver(run_id: str) -> dict[str, Any]:
     _replace_silver_table("bridge_campaign_doctor_base", bridge_campaign_doctor_base_rows)
     _replace_silver_table("fact_share_activity", share_rows_enriched)
     _replace_silver_table("fact_share_playback_event", playback_rows_enriched)
+    _replace_silver_table("fact_share_banner_click", banner_click_rows_enriched)
     _replace_silver_table("fact_share_funnel_first_seen", funnel_rows)
     _replace_silver_table("fact_video_view", fact_video_view_rows)
     _replace_silver_table("recon_doctor_share_summary", recon_rows)
@@ -1293,6 +1471,7 @@ def build_silver(run_id: str) -> dict[str, Any]:
             "bridge_campaign_doctor_base": len(bridge_campaign_doctor_base_rows),
             "fact_share_activity": len(share_rows_enriched),
             "fact_share_playback_event": len(playback_rows_enriched),
+            "fact_share_banner_click": len(banner_click_rows_enriched),
             "fact_share_funnel_first_seen": len(funnel_rows),
             "fact_video_view": len(fact_video_view_rows),
             "recon_doctor_share_summary": len(recon_rows),

@@ -628,18 +628,29 @@ def _bundle_rankings(share_rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return sorted(grouped.values(), key=lambda item: (-as_int(item.get("shares_count")), item.get("preferred_display_label") or ""))
 
 
-def _doctor_activity_rows(base_rows: list[dict[str, Any]], share_rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def _doctor_activity_rows(
+    base_rows: list[dict[str, Any]],
+    share_rows: list[dict[str, Any]],
+    banner_click_rows: list[dict[str, Any]] | None = None,
+) -> list[dict[str, Any]]:
+    banner_click_rows = banner_click_rows or []
     base_by_doctor = {clean_text(row.get("doctor_key")): row for row in base_rows if clean_text(row.get("doctor_key"))}
     share_groups: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for row in share_rows:
         doctor_key = clean_text(row.get("doctor_key"))
         if doctor_key:
             share_groups[doctor_key].append(row)
+    banner_click_groups: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for row in banner_click_rows:
+        doctor_key = clean_text(row.get("doctor_key"))
+        if doctor_key:
+            banner_click_groups[doctor_key].append(row)
 
     output: list[dict[str, Any]] = []
-    for doctor_key in sorted(set(base_by_doctor) | set(share_groups)):
+    for doctor_key in sorted(set(base_by_doctor) | set(share_groups) | set(banner_click_groups)):
         base = base_by_doctor.get(doctor_key, {})
         shares = share_groups.get(doctor_key, [])
+        banner_clicks = banner_click_groups.get(doctor_key, [])
         output.append(
             {
                 "doctor_key": doctor_key,
@@ -660,6 +671,9 @@ def _doctor_activity_rows(base_rows: list[dict[str, Any]], share_rows: list[dict
                 "shares_viewed_100_cumulative": len([row for row in shares if clean_text(row.get("is_viewed_100")) == "true"]),
                 "video_shares_cumulative": len([row for row in shares if clean_text(row.get("shared_item_type")) == "video"]),
                 "bundle_shares_cumulative": len([row for row in shares if clean_text(row.get("shared_item_type")) == "cluster"]),
+                "banner_clicks_cumulative": len(banner_clicks),
+                "first_banner_click_at_ts": min((clean_text(row.get("clicked_at_ts")) or "" for row in banner_clicks), default=""),
+                "last_banner_click_at_ts": max((clean_text(row.get("clicked_at_ts")) or "" for row in banner_clicks), default=""),
                 "last_shared_at_ts": max((clean_text(row.get("shared_at_ts")) or "" for row in shares), default=""),
             }
         )
@@ -751,6 +765,7 @@ def build_gold(run_id: str, source_status: str = "SUCCESS", notes: str = "") -> 
     base_rows = fetch_table(SILVER_SCHEMA, "bridge_campaign_doctor_base")
     share_rows = fetch_table(SILVER_SCHEMA, "fact_share_activity")
     playback_rows = fetch_table(SILVER_SCHEMA, "fact_share_playback_event")
+    banner_click_rows = fetch_table(SILVER_SCHEMA, "fact_share_banner_click")
     funnel_rows = fetch_table(SILVER_SCHEMA, "fact_share_funnel_first_seen")
     video_rows = fetch_table(SILVER_SCHEMA, "fact_video_view")
     enrollment_rows = fetch_table(SILVER_SCHEMA, "fact_campaign_enrollment")
@@ -767,7 +782,8 @@ def build_gold(run_id: str, source_status: str = "SUCCESS", notes: str = "") -> 
         has_publisher = clean_text(campaign.get("publisher_campaign_present_flag")) == "true"
         has_enrollment = any(clean_text(row.get("campaign_id_normalized")) == campaign_id_normalized for row in enrollment_rows)
         has_share = any(clean_text(row.get("campaign_id_normalized")) == campaign_id_normalized for row in share_rows)
-        if has_publisher or has_enrollment or has_share:
+        has_banner_click = any(clean_text(row.get("campaign_id_normalized")) == campaign_id_normalized for row in banner_click_rows)
+        if has_publisher or has_enrollment or has_share or has_banner_click:
             relevant_campaigns.append(campaign)
 
     global_registry_rows: list[dict[str, Any]] = []
@@ -785,6 +801,12 @@ def build_gold(run_id: str, source_status: str = "SUCCESS", notes: str = "") -> 
 
         campaign_base_rows = [row for row in base_rows if clean_text(row.get("campaign_id_normalized")) == campaign_id_normalized]
         campaign_share_rows_source = [row for row in share_rows if clean_text(row.get("campaign_id_normalized")) == campaign_id_normalized and clean_text(row.get("is_campaign_attributed_flag")) == "true"]
+        campaign_banner_click_rows = [
+            row
+            for row in banner_click_rows
+            if clean_text(row.get("campaign_id_normalized")) == campaign_id_normalized
+            and clean_text(row.get("is_campaign_attributed_flag")) == "true"
+        ]
         campaign_share_rows = _share_with_funnel(campaign_share_rows_source, [row for row in funnel_rows if clean_text(row.get("campaign_id_normalized")) == campaign_id_normalized], run_id, published_at)
         week_lookup = {
             clean_text(row.get("week_end_date")): row.get("week_index")
@@ -872,7 +894,7 @@ def build_gold(run_id: str, source_status: str = "SUCCESS", notes: str = "") -> 
         action_rows = _action_rows(weekly_rows, state_rows, rep_rows, thresholds, run_id, published_at)
         latest_state_rows = [row for row in state_rows if clean_text(row.get("is_bottom_3_flag")) == "true"]
         latest_rep_rows = [row for row in rep_rows if clean_text(row.get("is_bottom_3_flag")) == "true"]
-        doctor_activity_rows = _doctor_activity_rows(campaign_base_rows, campaign_share_rows)
+        doctor_activity_rows = _doctor_activity_rows(campaign_base_rows, campaign_share_rows, campaign_banner_click_rows)
         playback_detail_rows = [dict(row, week_end_date=clean_text(next((share.get("week_end_date") for share in campaign_share_rows if clean_text(share.get("share_public_id")) == clean_text(row.get("share_public_id"))), ""))) for row in playback_rows if clean_text(row.get("campaign_id_normalized")) == campaign_id_normalized]
         bundle_detail_rows = [row for row in campaign_share_rows if clean_text(row.get("shared_item_type")) == "cluster"]
         language_detail_rows = language_rows
