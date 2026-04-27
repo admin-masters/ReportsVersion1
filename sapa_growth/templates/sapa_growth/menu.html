@@ -28,18 +28,48 @@
       </div>
     </section>
 
-    <section class="launcher-grid">
-      {% for campaign in campaigns %}
-      <article class="list-card launcher-card">
-        <p class="eyebrow">Campaign</p>
-        <h3>{{ campaign.campaign_label }}</h3>
-        <p class="detail-meta">Open this campaign’s SAPA dashboard or manage its access history without affecting the others.</p>
-        <div class="launcher-actions">
-          <a class="download-button" href="{{ campaign.login_href }}">Open Secure Login</a>
-          <a class="ghost-button" href="{{ campaign.access_href }}">Manage Access Email</a>
+    <section class="filters-card">
+      <div class="panel-head">
+        <div>
+          <p class="eyebrow">Published Campaigns</p>
+          <h2>Available SAPA Campaigns</h2>
         </div>
-      </article>
-      {% endfor %}
+        <p class="detail-meta">Choose a campaign to open its dashboard, drill-downs, exports, and access flow.</p>
+      </div>
+      <div class="table-wrap">
+        <table class="detail-table">
+          <thead>
+            <tr>
+              <th>Campaign</th>
+              <th>Dashboard</th>
+              <th>Action</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for campaign in campaigns %}
+            <tr>
+              <td>
+                <strong>{{ campaign.campaign_label }}</strong>
+                <div class="detail-meta">{{ campaign.campaign_key }}</div>
+              </td>
+              <td>
+                <a href="{{ campaign.dashboard_href }}">{{ campaign.dashboard_href }}</a>
+              </td>
+              <td>
+                <div class="launcher-actions">
+                  <a class="download-button" href="{{ campaign.login_href }}">Open Secure Login</a>
+                  <a class="ghost-button" href="{{ campaign.access_href }}">Manage Access Email</a>
+                </div>
+              </td>
+            </tr>
+            {% empty %}
+            <tr>
+              <td colspan="3">No SAPA campaigns are published yet. Run <code>python manage.py run_sapa_growth_etl</code> after configuring the live SAPA sources.</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
     </section>
   </main>
 </body>

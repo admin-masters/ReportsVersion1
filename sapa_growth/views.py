@@ -66,7 +66,9 @@ def menu(request: HttpRequest) -> HttpResponse:
                 "campaign_key": campaign_key,
                 "campaign_label": option.get("display_label") or campaign_key or "SAPA Growth Clinic Program",
                 "login_href": _campaign_route("login", campaign_key or None),
+                "dashboard_href": _campaign_route("dashboard", campaign_key or None),
                 "access_href": _campaign_route("access", campaign_key or None),
+                "email_href": _campaign_route("send-access-email", campaign_key or None),
             }
         )
     return render(
