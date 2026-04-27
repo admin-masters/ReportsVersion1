@@ -578,8 +578,31 @@ def filter_options() -> dict[str, list[dict[str, Any]]]:
     }
 
 
+def _sorted_campaign_options(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    unique: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        key = clean_text(row.get("underlying_key") or row.get("campaign_key"))
+        label = clean_text(row.get("display_label") or row.get("campaign_label"))
+        if not key:
+            continue
+        unique[key] = {
+            "underlying_key": key,
+            "display_label": label or key,
+        }
+    return sorted(unique.values(), key=lambda item: ((item.get("display_label") or "").lower(), (item.get("underlying_key") or "").lower()))
+
+
 def campaign_options() -> list[dict[str, Any]]:
-    return filter_options()["campaigns"] or [_default_campaign()]
+    campaigns = _sorted_campaign_options(_gold_rows("dim_filter_campaign"))
+    if campaigns:
+        return campaigns
+    campaigns = _sorted_campaign_options(_gold_rows("dashboard_summary_state_rep"))
+    if campaigns:
+        return campaigns
+    campaigns = _sorted_campaign_options(_gold_rows("rpt_doctor_status_current"))
+    if campaigns:
+        return campaigns
+    return [_default_campaign()]
 
 
 def dashboard_context(filters: dict[str, str | None]) -> dict[str, Any]:
