@@ -19,16 +19,25 @@
     <section class="sapa-header">
       <div>
         <p class="eyebrow">SAPA Program Dashboard</p>
-        <h1>SAPA GROWTH CLINIC PROGRAM</h1>
+        <h1>{{ campaign.display_label|default:"SAPA GROWTH CLINIC PROGRAM" }}</h1>
       </div>
       <div class="header-meta">
         <p><strong>Last Updated:</strong> {{ refresh.published_at|default:refresh.as_of_date }}</p>
-        <button id="download-pdf-btn" class="download-button" type="button" data-export-url="{% url 'sapa_growth:dashboard-export' %}{% if filters_query %}?{{ filters_query }}{% endif %}">Download</button>
+        <button id="download-pdf-btn" class="download-button" type="button" data-export-url="{{ dashboard_export_href }}">Download</button>
       </div>
     </section>
 
     <section class="filters-card">
-      <form id="global-filters" method="get" class="filters-grid">
+      <form id="global-filters" method="get" action="/sapa-growth/" class="filters-grid">
+        <label>
+          <span>Campaign</span>
+          <select name="campaign_key">
+            <option value="">All Campaigns</option>
+            {% for option in filter_options.campaigns %}
+            <option value="{{ option.underlying_key }}" {% if filters.campaign_key == option.underlying_key %}selected{% endif %}>{{ option.display_label }}</option>
+            {% endfor %}
+          </select>
+        </label>
         <label>
           <span>State</span>
           <select name="state">
@@ -153,7 +162,7 @@
     <section class="section-block">
       <div class="cards-grid two-up">
         <article class="list-card">
-          <h3><a href="/sapa-growth/details/patient_videos/{% if filters_query %}?{{ filters_query }}{% endif %}">Top 5 Patient Education Videos Viewed</a></h3>
+          <h3><a href="{{ route_base }}details/patient_videos/{% if filters_query %}?{{ filters_query }}{% endif %}">Top 5 Patient Education Videos Viewed</a></h3>
           <ol>
             {% for row in patient_videos %}
             <li><span><a href="{{ row.content_identifier }}" target="_blank" rel="noopener noreferrer">{{ row.preferred_display_label }}</a></span><strong>{{ row.view_count }}</strong></li>
@@ -163,7 +172,7 @@
           </ol>
         </article>
         <article class="list-card">
-          <h3><a href="/sapa-growth/details/doctor_videos/{% if filters_query %}?{{ filters_query }}{% endif %}">Top 5 Doctor Education Videos Viewed</a></h3>
+          <h3><a href="{{ route_base }}details/doctor_videos/{% if filters_query %}?{{ filters_query }}{% endif %}">Top 5 Doctor Education Videos Viewed</a></h3>
           <ol>
             {% for row in doctor_videos %}
             <li><span><a href="{{ row.content_identifier }}" target="_blank" rel="noopener noreferrer">{{ row.preferred_display_label }}</a></span><strong>{{ row.view_count }}</strong></li>

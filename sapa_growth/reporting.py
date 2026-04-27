@@ -10,11 +10,14 @@ from sapa_growth.logic import clean_text, map_course_status, parse_date
 
 
 def filter_rows(rows: list[dict[str, Any]], filters: dict[str, str | None], city_field: str = "city") -> list[dict[str, Any]]:
+    campaign_key = clean_text(filters.get("campaign_key"))
     state = clean_text(filters.get("state"))
     field_rep_id = clean_text(filters.get("field_rep_id"))
     doctor_key = clean_text(filters.get("doctor_key"))
     city = clean_text(filters.get("city"))
     filtered = rows
+    if campaign_key:
+        filtered = [row for row in filtered if clean_text(row.get("campaign_key")) == campaign_key]
     if state:
         filtered = [row for row in filtered if clean_text(row.get("state")) == state]
     if field_rep_id:

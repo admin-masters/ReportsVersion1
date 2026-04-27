@@ -16,14 +16,23 @@
         <p class="detail-meta">As of {{ as_of_date }} | Last updated {{ last_updated }}</p>
       </div>
       <div class="detail-actions">
-        <a class="ghost-button" href="/sapa-growth/{% if filters_query %}?{{ filters_query }}{% endif %}">Back to Dashboard</a>
-        <a class="download-button" href="/sapa-growth/details/{{ metric }}/export/{% if filters_query %}?{{ filters_query }}{% endif %}">Export CSV</a>
+        <a class="ghost-button" href="{{ dashboard_href }}">Back to Dashboard</a>
+        <a class="download-button" href="{{ export_href }}">Export CSV</a>
       </div>
     </section>
 
     <section class="filters-card">
       <p><strong>Rows:</strong> {{ row_count }}</p>
-      <p><strong>Filters:</strong> State={{ filters.state|default:"All" }}, Field Rep={{ filters.field_rep_id|default:"All" }}, Doctor={{ filters.doctor_key|default:"All" }}</p>
+      <p><strong>Filters:</strong> Campaign={{ filters.campaign_key|default:"All" }}, State={{ filters.state|default:"All" }}, Field Rep={{ filters.field_rep_id|default:"All" }}, Doctor={{ filters.doctor_key|default:"All" }}</p>
+    </section>
+
+    <section class="cards-grid four-up">
+      {% for card in summary_cards %}
+      <article class="metric-card metric-card--neutral">
+        <div class="metric-card__title">{{ card.label }}</div>
+        <div class="metric-card__value">{{ card.count }}</div>
+      </article>
+      {% endfor %}
     </section>
 
     <section class="table-card">

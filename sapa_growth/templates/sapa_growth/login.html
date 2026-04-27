@@ -24,7 +24,7 @@
         <p class="access-copy">Use the credentials shared with you to open the dashboard. Access sharing is managed from a separate page.</p>
       </div>
       <div class="header-meta">
-        <a class="ghost-button" href="{% url 'sapa_growth:menu' %}">Back to SAPA Launcher</a>
+        <a class="ghost-button" href="{{ menu_href }}">Back to SAPA Launcher</a>
       </div>
     </section>
 
@@ -33,7 +33,7 @@
       <div class="flash-message flash-error">{{ error_message }}</div>
       {% endif %}
 
-      <form method="post" action="{% url 'sapa_growth:login' %}" class="access-form access-form-single">
+      <form method="post" action="" class="access-form access-form-single">
         {% csrf_token %}
         <label>
           <span>Username</span>

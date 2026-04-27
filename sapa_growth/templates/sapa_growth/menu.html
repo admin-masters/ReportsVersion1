@@ -29,23 +29,17 @@
     </section>
 
     <section class="launcher-grid">
+      {% for campaign in campaigns %}
       <article class="list-card launcher-card">
-        <p class="eyebrow">Secure Entry</p>
-        <h3>Open Report Login</h3>
-        <p class="detail-meta">Use the program credentials shared by email to open the SAPA dashboard.</p>
+        <p class="eyebrow">Campaign</p>
+        <h3>{{ campaign.campaign_label }}</h3>
+        <p class="detail-meta">Open this campaign’s SAPA dashboard or manage its access history without affecting the others.</p>
         <div class="launcher-actions">
-          <a class="download-button" href="{% url 'sapa_growth:login' %}">Open Secure Login</a>
+          <a class="download-button" href="{{ campaign.login_href }}">Open Secure Login</a>
+          <a class="ghost-button" href="{{ campaign.access_href }}">Manage Access Email</a>
         </div>
       </article>
-
-      <article class="list-card launcher-card">
-        <p class="eyebrow">Access Sharing</p>
-        <h3>Manage Access Email</h3>
-        <p class="detail-meta">Send the SAPA access link and credentials, and review the recent recipients list.</p>
-        <div class="launcher-actions">
-          <a class="ghost-button" href="{% url 'sapa_growth:access' %}">Manage Access Email</a>
-        </div>
-      </article>
+      {% endfor %}
     </section>
   </main>
 </body>
