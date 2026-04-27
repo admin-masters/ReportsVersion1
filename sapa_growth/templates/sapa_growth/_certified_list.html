@@ -6,7 +6,8 @@
 <section class="certified-panel">
   <div class="certified-toolbar">
     <h3>Certified Clinics List</h3>
-    <form class="certified-filter-form" method="get" action="/sapa-growth/certified-clinics/">
+    <form class="certified-filter-form" method="get" action="{{ route_base }}certified-clinics/">
+      {% if filters.campaign_key %}<input type="hidden" name="campaign_key" value="{{ filters.campaign_key }}">{% endif %}
       {% if filters.state %}<input type="hidden" name="state" value="{{ filters.state }}">{% endif %}
       <label>
         <span>Doctor</span>
@@ -35,7 +36,7 @@
           {% endfor %}
         </select>
       </label>
-      <a class="download-button" href="/sapa-growth/certified-clinics/export/{% if export_query %}?{{ export_query }}{% endif %}">Download</a>
+      <a class="download-button" href="{{ route_base }}certified-clinics/export/{% if export_query %}?{{ export_query }}{% endif %}">Download</a>
     </form>
   </div>
   <div class="table-wrap">

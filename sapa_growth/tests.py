@@ -10,7 +10,7 @@ from django.urls import resolve, reverse
 
 from etl.sapa_growth.mysql import extract_rows
 from sapa_growth.logic import classify_metric_event, explode_followup_schedule, map_course_status, normalize_phone, webinar_effective_date
-from sapa_growth.services import _derived_certified_rows, _enrich_video_rows, dashboard_context, export_dashboard_pdf
+from sapa_growth.services import _derived_certified_rows, _enrich_video_rows, dashboard_context, detail_context, export_dashboard_pdf
 from sapa_growth.video_metadata import resolve_video_metadata
 
 
@@ -122,7 +122,7 @@ class SapaGrowthLogicTests(SimpleTestCase):
 
     def test_certified_rows_require_active_clinic_and_doctor_course_enrollment(self):
         rows = _derived_certified_rows(
-            {"state": None, "field_rep_id": None, "doctor_key": None},
+            {"campaign_key": None, "state": None, "field_rep_id": None, "doctor_key": None},
             [
                 {"doctor_key": "DOC-1", "doctor_display_name": "Dr A", "active_flag": "true", "city": "Pune", "state": "MH", "field_rep_id": "FR1"},
                 {"doctor_key": "DOC-2", "doctor_display_name": "Dr B", "active_flag": "false", "city": "Delhi", "state": "DL", "field_rep_id": "FR2"},
@@ -164,26 +164,52 @@ class SapaGrowthLogicTests(SimpleTestCase):
     def test_dashboard_context_without_refresh_sets_safe_export_filename(self):
         with patch("sapa_growth.services._latest_refresh", return_value=None), patch(
             "sapa_growth.services.filter_options",
-            return_value={"states": [], "field_reps": [], "doctors": [], "cities": []},
+            return_value={"campaigns": [{"underlying_key": "growth-clinic", "display_label": "SAPA Growth Clinic Program"}], "states": [], "field_reps": [], "doctors": [], "cities": []},
         ):
-            context = dashboard_context({"state": None, "field_rep_id": None, "doctor_key": None})
+            context = dashboard_context({"campaign_key": None, "state": None, "field_rep_id": None, "doctor_key": None})
         self.assertFalse(context["ready"])
         self.assertEqual(context["export_filename"], "sapa-growth-dashboard-report.pdf")
+
+    def test_detail_context_includes_window_summary_cards(self):
+        with patch("sapa_growth.services._gold_rows") as gold_rows_mock, patch(
+            "sapa_growth.services._latest_refresh",
+            return_value={"as_of_date": "2026-04-27", "published_at": "2026-04-27T10:00:00Z"},
+        ):
+            def fake_gold_rows(table: str):
+                if table == "rpt_screening_detail":
+                    return [
+                        {"submitted_at": "2026-04-27", "doctor_key": "DOC-1", "campaign_key": "growth-clinic"},
+                        {"submitted_at": "2026-04-25", "doctor_key": "DOC-2", "campaign_key": "growth-clinic"},
+                        {"submitted_at": "2026-04-05", "doctor_key": "DOC-3", "campaign_key": "growth-clinic"},
+                        {"submitted_at": "2026-03-01", "doctor_key": "DOC-4", "campaign_key": "growth-clinic"},
+                    ]
+                return []
+
+            gold_rows_mock.side_effect = fake_gold_rows
+            context = detail_context("total_screenings", {"campaign_key": "growth-clinic", "state": None, "field_rep_id": None, "doctor_key": None})
+        self.assertEqual([card["label"] for card in context["summary_cards"]], ["Last 24 Hours", "Last Week", "Last Month", "Cumulative"])
+        self.assertEqual([card["count"] for card in context["summary_cards"]], [1, 2, 3, 4])
+        self.assertEqual(context["route_base"], "/sapa-growth/campaign/growth-clinic/")
 
 
 class SapaGrowthRoutingTests(SimpleTestCase):
     def test_dashboard_route_registered(self):
         self.assertEqual(reverse("sapa_growth:dashboard"), "/sapa-growth/")
         self.assertEqual(resolve("/sapa-growth/").view_name, "sapa_growth:dashboard")
+        self.assertEqual(resolve("/sapa-growth/campaign/growth-clinic/").view_name, "sapa_growth:campaign-dashboard")
         self.assertEqual(resolve("/sapa-growth/menu/").view_name, "sapa_growth:menu")
         self.assertEqual(resolve("/sapa-growth/login/").view_name, "sapa_growth:login")
+        self.assertEqual(resolve("/sapa-growth/campaign/growth-clinic/login/").view_name, "sapa_growth:campaign-login")
         self.assertEqual(resolve("/sapa-growth/access/").view_name, "sapa_growth:access")
         self.assertEqual(resolve("/sapa-growth/send-access-email/").view_name, "sapa_growth:send-access-email")
 
 
 class SapaGrowthAccessViewTests(SimpleTestCase):
     def test_menu_page_renders(self):
-        with patch("sapa_growth.views._latest_refresh", return_value=None):
+        with patch("sapa_growth.views._latest_refresh", return_value=None), patch(
+            "sapa_growth.views.campaign_options",
+            return_value=[{"underlying_key": "growth-clinic", "display_label": "SAPA Growth Clinic Program"}],
+        ):
             response = self.client.get("/sapa-growth/menu/")
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, "SAPA Growth Clinic Program")
@@ -194,12 +220,19 @@ class SapaGrowthAccessViewTests(SimpleTestCase):
         self.assertEqual(response["Location"], "/sapa-growth/login/")
 
     def test_login_page_renders(self):
-        response = self.client.get("/sapa-growth/login/")
+        with patch(
+            "sapa_growth.views.campaign_options",
+            return_value=[{"underlying_key": "growth-clinic", "display_label": "SAPA Growth Clinic Program"}],
+        ):
+            response = self.client.get("/sapa-growth/login/")
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, "SAPA Growth Clinic Program")
 
     def test_send_access_email_route_redirects_and_calls_mailer(self):
-        with patch("sapa_growth.views.send_access_email") as send_email_mock:
+        with patch("sapa_growth.views.send_access_email") as send_email_mock, patch(
+            "sapa_growth.views.campaign_options",
+            return_value=[{"underlying_key": "growth-clinic", "display_label": "SAPA Growth Clinic Program"}],
+        ):
             response = self.client.post(
                 "/sapa-growth/send-access-email/",
                 {"recipient_email": "team@example.com"},

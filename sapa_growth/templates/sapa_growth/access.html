@@ -24,8 +24,8 @@
         <p class="access-copy">Send the SAPA report link and credentials from this page and review who has already received access.</p>
       </div>
       <div class="header-meta">
-        <a class="download-button" href="{% url 'sapa_growth:login' %}">Open Secure Login</a>
-        <a class="ghost-button" href="{% url 'sapa_growth:menu' %}">Back to SAPA Launcher</a>
+        <a class="download-button" href="{{ login_href }}">Open Secure Login</a>
+        <a class="ghost-button" href="{{ menu_href }}">Back to SAPA Launcher</a>
       </div>
     </section>
 
@@ -36,7 +36,7 @@
           <h3>Share This Program</h3>
           <p class="detail-meta">Enter one receiver email to send the SAPA report link and credentials.</p>
         </div>
-        <form method="post" action="{% url 'sapa_growth:send-access-email' %}" class="access-form">
+        <form method="post" action="{{ send_access_href }}" class="access-form">
           {% csrf_token %}
           <label>
             <span>Receiver Email</span>

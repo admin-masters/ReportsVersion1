@@ -263,6 +263,8 @@ SAPA_DASHBOARD = {
     "TIMEZONE": _env("SAPA_DASHBOARD_TIMEZONE", default="Asia/Kolkata"),
     "CERTIFICATION_ENABLED": _env_bool("SAPA_CERTIFICATION_ENABLED", default=False),
     "CONDITION_RANKING_ENABLED": _env_bool("SAPA_CONDITION_RANKING_ENABLED", default=False),
+    "DEFAULT_CAMPAIGN_KEY": _env("SAPA_DEFAULT_CAMPAIGN_KEY", default="growth-clinic"),
+    "DEFAULT_CAMPAIGN_LABEL": _env("SAPA_DEFAULT_CAMPAIGN_LABEL", default="SAPA Growth Clinic Program"),
 }
 
 PE_MASTER_MYSQL = {

@@ -71,6 +71,8 @@ def _doctor_filters(dim_row: dict[str, Any] | None) -> dict[str, str]:
             "district": "",
             "state": "",
             "field_rep_id": "Unassigned",
+            "campaign_key": "",
+            "campaign_label": "",
         }
     return {
         "doctor_display_name": _empty_text(dim_row.get("canonical_display_name"), "Unknown Doctor"),
@@ -78,7 +80,38 @@ def _doctor_filters(dim_row: dict[str, Any] | None) -> dict[str, str]:
         "district": _empty_text(dim_row.get("district")),
         "state": _empty_text(dim_row.get("state")),
         "field_rep_id": _empty_text(dim_row.get("field_rep_id"), "Unassigned"),
+        "campaign_key": _empty_text(dim_row.get("campaign_key")),
+        "campaign_label": _empty_text(dim_row.get("campaign_label")),
     }
+
+
+def _campaign_key_label(*rows: dict[str, Any] | None) -> tuple[str, str]:
+    default_key = clean_text(settings.SAPA_DASHBOARD.get("DEFAULT_CAMPAIGN_KEY")) or "growth-clinic"
+    default_label = clean_text(settings.SAPA_DASHBOARD.get("DEFAULT_CAMPAIGN_LABEL")) or "SAPA Growth Clinic Program"
+    key = ""
+    label = ""
+    key_fields = ("brand_campaign_id", "campaign_id", "campaign_key", "campaign", "program_id")
+    label_fields = ("campaign_name", "program_name", "brand_name", "campaign_label")
+    for row in rows:
+        if not row:
+            continue
+        if not key:
+            for field in key_fields:
+                key = clean_text(row.get(field))
+                if key:
+                    break
+        if not label:
+            for field in label_fields:
+                label = clean_text(row.get(field))
+                if label:
+                    break
+        if key and label:
+            break
+    if not key:
+        key = default_key
+    if not label:
+        label = default_label if key == default_key else key.replace("-", " ").replace("_", " ").title()
+    return key, label
 
 
 def build_silver(run_id: str) -> dict[str, Any]:
@@ -102,14 +135,17 @@ def build_silver(run_id: str) -> dict[str, Any]:
     course_breakdown_rows = fetch_table(BRONZE_SCHEMA, "wp_course_breakdown")
 
     redflag_doctor_by_id = {clean_text(row.get("doctor_id")): row for row in redflag_doctors if clean_text(row.get("doctor_id"))}
+    clinic_outcome_by_doctor = {clean_text(row.get("doctor_id")): row for row in clinic_outcomes if clean_text(row.get("doctor_id"))}
     dim_rows: list[dict[str, Any]] = []
     included_doctor_ids: set[str] = set()
 
     for campaign_row in campaign_doctors:
         doctor_id = clean_text(campaign_row.get("doctor_id"))
         doctor_row = redflag_doctor_by_id.get(doctor_id)
+        clinic_outcome_row = clinic_outcome_by_doctor.get(doctor_id)
         doctor_key = canonical_doctor_key(doctor_id, campaign_row.get("id"))
         first_name, last_name = split_full_name(campaign_row.get("full_name"))
+        campaign_key, campaign_label = _campaign_key_label(campaign_row, clinic_outcome_row, doctor_row)
         if doctor_row:
             first_name = clean_text(doctor_row.get("first_name")) or first_name
             last_name = clean_text(doctor_row.get("last_name")) or last_name
@@ -118,6 +154,8 @@ def build_silver(run_id: str) -> dict[str, Any]:
                 "doctor_key": doctor_key,
                 "source_doctor_id": doctor_id or "",
                 "campaign_doctor_row_id": _empty_text(campaign_row.get("id")),
+                "campaign_key": campaign_key,
+                "campaign_label": campaign_label,
                 "canonical_display_name": display_name_from_sources(campaign_row, doctor_row),
                 "first_name": first_name or "",
                 "last_name": last_name or "",
@@ -148,11 +186,15 @@ def build_silver(run_id: str) -> dict[str, Any]:
         doctor_id = clean_text(doctor_row.get("doctor_id"))
         if doctor_id in included_doctor_ids:
             continue
+        clinic_outcome_row = clinic_outcome_by_doctor.get(doctor_id)
+        campaign_key, campaign_label = _campaign_key_label(doctor_row, clinic_outcome_row)
         dim_rows.append(
             {
                 "doctor_key": canonical_doctor_key(doctor_id, None),
                 "source_doctor_id": doctor_id or "",
                 "campaign_doctor_row_id": "",
+                "campaign_key": campaign_key,
+                "campaign_label": campaign_label,
                 "canonical_display_name": display_name_from_sources(None, doctor_row),
                 "first_name": _empty_text(doctor_row.get("first_name")),
                 "last_name": _empty_text(doctor_row.get("last_name")),
@@ -181,6 +223,8 @@ def build_silver(run_id: str) -> dict[str, Any]:
         "doctor_key",
         "source_doctor_id",
         "campaign_doctor_row_id",
+        "campaign_key",
+        "campaign_label",
         "canonical_display_name",
         "first_name",
         "last_name",

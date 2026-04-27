@@ -4,8 +4,9 @@ from datetime import date, timedelta
 from io import BytesIO
 from math import ceil
 from typing import Any
-from urllib.parse import urlencode
+from urllib.parse import quote, urlencode
 
+from django.conf import settings
 from django.http import Http404, HttpRequest, HttpResponse, HttpResponseBadRequest, HttpResponseNotAllowed
 from openpyxl import Workbook
 from reportlab.lib.utils import ImageReader
@@ -64,6 +65,7 @@ DETAIL_SPECS = {
     "webinar_registrations": {
         "table": "rpt_webinar_registration_detail",
         "date_field": "registration_effective_date",
+        "summary_date_field": "registration_effective_date",
         "title": "Webinar Registrations",
         "weekly": True,
         "columns": ["event_title", "start_date", "end_date", "timezone", "email", "first_name", "last_name", "doctor_display_name", "state", "field_rep_id"],
@@ -71,6 +73,8 @@ DETAIL_SPECS = {
     "onboarded_doctors": {
         "table": "rpt_doctor_status_current",
         "date_field": "first_seen_at",
+        "summary_date_field": "first_seen_at",
+        "summary_unique_field": "doctor_key",
         "title": "Onboarded Doctors",
         "weekly": True,
         "predicate": lambda row: row.get("onboarding_flag") == "true",
@@ -80,6 +84,7 @@ DETAIL_SPECS = {
         "table": "rpt_doctor_status_current",
         "title": "Active Clinics",
         "weekly": False,
+        "summary_mode": "status_history_active",
         "predicate": lambda row: row.get("active_flag") == "true",
         "columns": ["doctor_display_name", "city", "state", "field_rep_id", "screenings_last_15d", "last_screening_at"],
     },
@@ -87,6 +92,7 @@ DETAIL_SPECS = {
         "table": "rpt_doctor_status_current",
         "title": "Inactive Clinics",
         "weekly": False,
+        "summary_mode": "status_history_inactive",
         "predicate": lambda row: row.get("inactive_flag") == "true",
         "columns": ["doctor_display_name", "city", "state", "field_rep_id", "screenings_last_15d", "last_screening_at"],
     },
@@ -94,11 +100,13 @@ DETAIL_SPECS = {
         "table": "rpt_certified_clinics",
         "title": "Certified Clinics",
         "weekly": False,
+        "summary_mode": "status_history_certified",
         "columns": ["serial_order", "doctor_display_name", "city", "state", "field_rep_id", "certification_status", "certification_date"],
     },
     "total_screenings": {
         "table": "rpt_screening_detail",
         "date_field": "submitted_at",
+        "summary_date_field": "submitted_at",
         "title": "Total Screenings",
         "weekly": True,
         "columns": ["doctor_display_name", "patient_id", "form_identifier", "language_code", "submitted_at", "overall_flag_code", "state", "field_rep_id"],
@@ -106,6 +114,7 @@ DETAIL_SPECS = {
     "red_tags": {
         "table": "rpt_tag_detail",
         "date_field": "submitted_at",
+        "summary_date_field": "submitted_at",
         "title": "Red Tags",
         "weekly": True,
         "predicate": lambda row: clean_text(row.get("tag_color")) == "red",
@@ -114,6 +123,7 @@ DETAIL_SPECS = {
     "yellow_tags": {
         "table": "rpt_tag_detail",
         "date_field": "submitted_at",
+        "summary_date_field": "submitted_at",
         "title": "Yellow Tags",
         "weekly": True,
         "predicate": lambda row: clean_text(row.get("tag_color")) == "yellow",
@@ -122,6 +132,7 @@ DETAIL_SPECS = {
     "followups_scheduled": {
         "table": "rpt_followup_schedule_detail",
         "date_field": "scheduled_followup_date",
+        "summary_date_field": "scheduled_followup_date",
         "title": "Follow-ups Scheduled",
         "weekly": True,
         "columns": ["doctor_display_name", "patient_id", "patient_name", "scheduled_followup_date", "schedule_sequence", "field_rep_id", "state"],
@@ -129,6 +140,7 @@ DETAIL_SPECS = {
     "reminders_sent": {
         "table": "rpt_reminder_sent_detail",
         "date_field": "ts",
+        "summary_date_field": "ts",
         "title": "Reminders Sent",
         "weekly": True,
         "columns": ["doctor_display_name", "patient_id", "ts", "action_key", "field_rep_id", "state"],
@@ -137,6 +149,7 @@ DETAIL_SPECS = {
         "table": "rpt_course_detail",
         "title": "Doctor Course Started",
         "weekly": False,
+        "summary_date_field": "started_at",
         "predicate": lambda row: clean_text(row.get("course_audience")) == "doctor" and clean_text(row.get("dashboard_status")) == "Started",
         "columns": ["display_name", "user_email", "phone", "progress_status", "enrolled_at", "started_at", "doctor_display_name", "state", "field_rep_id"],
     },
@@ -144,6 +157,7 @@ DETAIL_SPECS = {
         "table": "rpt_course_detail",
         "title": "Doctor Course Completed",
         "weekly": False,
+        "summary_date_field": "completed_at",
         "predicate": lambda row: clean_text(row.get("course_audience")) == "doctor" and clean_text(row.get("dashboard_status")) == "Completed",
         "columns": ["display_name", "user_email", "phone", "progress_status", "completed_at", "doctor_display_name", "state", "field_rep_id"],
     },
@@ -151,6 +165,7 @@ DETAIL_SPECS = {
         "table": "rpt_course_detail",
         "title": "Doctor Course Pending",
         "weekly": False,
+        "summary_date_field": "enrolled_at",
         "predicate": lambda row: clean_text(row.get("course_audience")) == "doctor" and clean_text(row.get("dashboard_status")) == "Pending",
         "columns": ["display_name", "user_email", "phone", "progress_status", "enrolled_at", "doctor_display_name", "state", "field_rep_id"],
     },
@@ -158,6 +173,7 @@ DETAIL_SPECS = {
         "table": "rpt_course_detail",
         "title": "Paramedic Course Started",
         "weekly": False,
+        "summary_date_field": "started_at",
         "predicate": lambda row: clean_text(row.get("course_audience")) == "paramedic" and clean_text(row.get("dashboard_status")) == "Started",
         "columns": ["display_name", "user_email", "phone", "progress_status", "enrolled_at", "started_at", "doctor_display_name", "state", "field_rep_id"],
     },
@@ -165,6 +181,7 @@ DETAIL_SPECS = {
         "table": "rpt_course_detail",
         "title": "Paramedic Course Completed",
         "weekly": False,
+        "summary_date_field": "completed_at",
         "predicate": lambda row: clean_text(row.get("course_audience")) == "paramedic" and clean_text(row.get("dashboard_status")) == "Completed",
         "columns": ["display_name", "user_email", "phone", "progress_status", "completed_at", "doctor_display_name", "state", "field_rep_id"],
     },
@@ -172,6 +189,7 @@ DETAIL_SPECS = {
         "table": "rpt_course_detail",
         "title": "Paramedic Course Pending",
         "weekly": False,
+        "summary_date_field": "enrolled_at",
         "predicate": lambda row: clean_text(row.get("course_audience")) == "paramedic" and clean_text(row.get("dashboard_status")) == "Pending",
         "columns": ["display_name", "user_email", "phone", "progress_status", "enrolled_at", "doctor_display_name", "state", "field_rep_id"],
     },
@@ -179,6 +197,7 @@ DETAIL_SPECS = {
         "table": "rpt_video_view_detail",
         "title": "Top Patient Education Videos Viewed",
         "weekly": False,
+        "summary_date_field": "ts",
         "predicate": lambda row: clean_text(row.get("audience")) == "patient",
         "columns": ["rank", "preferred_display_label", "view_count", "latest_interaction_timestamp"],
     },
@@ -186,6 +205,7 @@ DETAIL_SPECS = {
         "table": "rpt_video_view_detail",
         "title": "Top Doctor Education Videos Viewed",
         "weekly": False,
+        "summary_date_field": "ts",
         "predicate": lambda row: clean_text(row.get("audience")) == "doctor",
         "columns": ["rank", "preferred_display_label", "view_count", "latest_interaction_timestamp"],
     },
@@ -235,6 +255,26 @@ def _enrich_video_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
         item["preferred_display_label"] = metadata["preferred_display_label"] or item["video_title"] or resolved_link
         enriched.append(item)
     return enriched
+
+
+def _default_campaign() -> dict[str, str]:
+    return {
+        "underlying_key": clean_text(settings.SAPA_DASHBOARD.get("DEFAULT_CAMPAIGN_KEY")) or "growth-clinic",
+        "display_label": clean_text(settings.SAPA_DASHBOARD.get("DEFAULT_CAMPAIGN_LABEL")) or "SAPA Growth Clinic Program",
+    }
+
+
+def _campaign_route_base(filters: dict[str, str | None]) -> str:
+    campaign_key = clean_text(filters.get("campaign_key"))
+    if campaign_key:
+        return f"/sapa-growth/campaign/{quote(campaign_key)}/"
+    return "/sapa-growth/"
+
+
+def _metric_href(metric: str, filters: dict[str, str | None]) -> str:
+    base = _campaign_route_base(filters)
+    query_string = current_filters_query(filters, include_campaign=not clean_text(filters.get("campaign_key")))
+    return f"{base}details/{metric}/" + (f"?{query_string}" if query_string else "")
 
 
 def _latest_refresh() -> dict[str, Any] | None:
@@ -374,8 +414,9 @@ def _derived_certified_rows(
     return rows
 
 
-def parse_global_filters(query_params: Any) -> dict[str, str | None]:
+def parse_global_filters(query_params: Any, campaign_key: str | None = None) -> dict[str, str | None]:
     return {
+        "campaign_key": clean_text(campaign_key) or clean_text(query_params.get("campaign_key")),
         "state": clean_text(query_params.get("state")),
         "field_rep_id": clean_text(query_params.get("field_rep_id")),
         "doctor_key": clean_text(query_params.get("doctor_key")),
@@ -384,6 +425,7 @@ def parse_global_filters(query_params: Any) -> dict[str, str | None]:
 
 def parse_certified_filters(query_params: Any, global_filters: dict[str, str | None]) -> dict[str, str | None]:
     return {
+        "campaign_key": global_filters.get("campaign_key"),
         "state": global_filters.get("state"),
         "field_rep_id": clean_text(query_params.get("cert_field_rep_id")) or global_filters.get("field_rep_id"),
         "doctor_key": clean_text(query_params.get("cert_doctor_key")) or global_filters.get("doctor_key"),
@@ -391,8 +433,11 @@ def parse_certified_filters(query_params: Any, global_filters: dict[str, str | N
     }
 
 
-def current_filters_query(filters: dict[str, str | None]) -> str:
-    return urlencode({key: value for key, value in filters.items() if value})
+def current_filters_query(filters: dict[str, str | None], include_campaign: bool = True) -> str:
+    payload = {key: value for key, value in filters.items() if value}
+    if not include_campaign:
+        payload.pop("campaign_key", None)
+    return urlencode(payload)
 
 
 def _with_delta(current: int | None, previous: int | None) -> dict[str, Any]:
@@ -402,8 +447,6 @@ def _with_delta(current: int | None, previous: int | None) -> dict[str, Any]:
 
 
 def _dashboard_tiles(summary: dict[str, Any], filters: dict[str, str | None]) -> dict[str, list[dict[str, Any]]]:
-    query_string = current_filters_query(filters)
-    suffix = f"?{query_string}" if query_string else ""
     return {
         "field_rep": [
             {
@@ -411,7 +454,7 @@ def _dashboard_tiles(summary: dict[str, Any], filters: dict[str, str | None]) ->
                 "value": summary["webinar_registrations_weekly"],
                 "cumulative": summary["webinar_registrations_cumulative"],
                 "delta": summary["webinar_registrations_weekly"] - summary["webinar_registrations_previous"],
-                "href": f"/sapa-growth/details/webinar_registrations/{suffix}",
+                "href": _metric_href("webinar_registrations", filters),
                 "theme": "teal",
                 "supported": True,
             },
@@ -420,7 +463,7 @@ def _dashboard_tiles(summary: dict[str, Any], filters: dict[str, str | None]) ->
                 "value": summary["onboarded_doctors_weekly"],
                 "cumulative": summary["onboarded_doctors_cumulative"],
                 "delta": summary["onboarded_doctors_weekly"] - summary["onboarded_doctors_previous"],
-                "href": f"/sapa-growth/details/onboarded_doctors/{suffix}",
+                "href": _metric_href("onboarded_doctors", filters),
                 "theme": "teal",
                 "supported": True,
             },
@@ -431,7 +474,7 @@ def _dashboard_tiles(summary: dict[str, Any], filters: dict[str, str | None]) ->
                 "value": summary["active_clinics_current"],
                 "cumulative": summary["active_clinics_cumulative"],
                 "delta": summary["active_clinics_current"] - summary["active_clinics_previous"],
-                "href": f"/sapa-growth/details/active_clinics/{suffix}",
+                "href": _metric_href("active_clinics", filters),
                 "theme": "positive",
                 "supported": True,
             },
@@ -440,7 +483,7 @@ def _dashboard_tiles(summary: dict[str, Any], filters: dict[str, str | None]) ->
                 "value": summary["inactive_clinics_current"],
                 "cumulative": summary["inactive_clinics_cumulative"],
                 "delta": summary["inactive_clinics_current"] - summary["inactive_clinics_previous"],
-                "href": f"/sapa-growth/details/inactive_clinics/{suffix}",
+                "href": _metric_href("inactive_clinics", filters),
                 "theme": "negative",
                 "supported": True,
             },
@@ -449,7 +492,7 @@ def _dashboard_tiles(summary: dict[str, Any], filters: dict[str, str | None]) ->
                 "value": summary["certified_clinics_current"],
                 "cumulative": summary["certified_clinics_cumulative"],
                 "delta": 0 if summary["certified_clinics_current"] is None or summary["certified_clinics_previous"] is None else summary["certified_clinics_current"] - summary["certified_clinics_previous"],
-                "href": f"/sapa-growth/details/certified_clinics/{suffix}",
+                "href": _metric_href("certified_clinics", filters),
                 "theme": "neutral",
                 "supported": True,
             },
@@ -458,7 +501,7 @@ def _dashboard_tiles(summary: dict[str, Any], filters: dict[str, str | None]) ->
                 "value": summary["total_screenings_weekly"],
                 "cumulative": summary["total_screenings_cumulative"],
                 "delta": summary["total_screenings_weekly"] - summary["total_screenings_previous"],
-                "href": f"/sapa-growth/details/total_screenings/{suffix}",
+                "href": _metric_href("total_screenings", filters),
                 "theme": "neutral",
                 "supported": True,
             },
@@ -467,7 +510,7 @@ def _dashboard_tiles(summary: dict[str, Any], filters: dict[str, str | None]) ->
                 "value": summary["red_tags_weekly"],
                 "cumulative": summary["red_tags_cumulative"],
                 "delta": summary["red_tags_weekly"] - summary["red_tags_previous"],
-                "href": f"/sapa-growth/details/red_tags/{suffix}",
+                "href": _metric_href("red_tags", filters),
                 "theme": "warning",
                 "supported": True,
             },
@@ -476,7 +519,7 @@ def _dashboard_tiles(summary: dict[str, Any], filters: dict[str, str | None]) ->
                 "value": summary["yellow_tags_weekly"],
                 "cumulative": summary["yellow_tags_cumulative"],
                 "delta": summary["yellow_tags_weekly"] - summary["yellow_tags_previous"],
-                "href": f"/sapa-growth/details/yellow_tags/{suffix}",
+                "href": _metric_href("yellow_tags", filters),
                 "theme": "warning",
                 "supported": True,
             },
@@ -487,7 +530,7 @@ def _dashboard_tiles(summary: dict[str, Any], filters: dict[str, str | None]) ->
                 "value": summary["followups_scheduled_weekly"],
                 "cumulative": summary["followups_scheduled_cumulative"],
                 "delta": summary["followups_scheduled_weekly"] - summary["followups_scheduled_previous"],
-                "href": f"/sapa-growth/details/followups_scheduled/{suffix}",
+                "href": _metric_href("followups_scheduled", filters),
                 "theme": "teal",
                 "supported": True,
             },
@@ -496,7 +539,7 @@ def _dashboard_tiles(summary: dict[str, Any], filters: dict[str, str | None]) ->
                 "value": summary["reminders_sent_weekly"],
                 "cumulative": summary["reminders_sent_cumulative"],
                 "delta": summary["reminders_sent_weekly"] - summary["reminders_sent_previous"],
-                "href": f"/sapa-growth/details/reminders_sent/{suffix}",
+                "href": _metric_href("reminders_sent", filters),
                 "theme": "teal",
                 "supported": True,
             },
@@ -506,8 +549,6 @@ def _dashboard_tiles(summary: dict[str, Any], filters: dict[str, str | None]) ->
 
 def _course_cards(course_rows: list[dict[str, Any]], filters: dict[str, str | None]) -> list[dict[str, Any]]:
     counts = course_status_counts(course_rows)
-    query_string = current_filters_query(filters)
-    suffix = f"?{query_string}" if query_string else ""
     cards = []
     for audience, title in (("doctor", "Doctor Course"), ("paramedic", "Paramedic Course")):
         summary = counts.get(audience, {"Started": 0, "Completed": 0, "Pending": 0, "Total": 0})
@@ -520,7 +561,7 @@ def _course_cards(course_rows: list[dict[str, Any]], filters: dict[str, str | No
                     "label": status,
                     "count": summary[status],
                     "ratio": round((summary[status] / total) * 100, 2) if total else 0,
-                    "href": f"/sapa-growth/details/{metric_key}/{suffix}",
+                    "href": _metric_href(metric_key, filters),
                 }
             )
         cards.append({"title": title, "rows": rows, "total": total})
@@ -529,6 +570,7 @@ def _course_cards(course_rows: list[dict[str, Any]], filters: dict[str, str | No
 
 def filter_options() -> dict[str, list[dict[str, Any]]]:
     return {
+        "campaigns": _gold_rows("dim_filter_campaign") or [_default_campaign()],
         "states": _gold_rows("dim_filter_state"),
         "field_reps": _gold_rows("dim_filter_field_rep"),
         "doctors": _gold_rows("dim_filter_doctor"),
@@ -536,15 +578,25 @@ def filter_options() -> dict[str, list[dict[str, Any]]]:
     }
 
 
+def campaign_options() -> list[dict[str, Any]]:
+    return filter_options()["campaigns"] or [_default_campaign()]
+
+
 def dashboard_context(filters: dict[str, str | None]) -> dict[str, Any]:
     refresh = _latest_refresh()
     options = filter_options()
+    selected_campaign = next(
+        (option for option in options["campaigns"] if clean_text(option.get("underlying_key")) == clean_text(filters.get("campaign_key"))),
+        None,
+    )
     if refresh is None:
         return {
             "ready": False,
             "filters": filters,
             "filter_options": options,
             "export_filename": "sapa-growth-dashboard-report.pdf",
+            "campaign": selected_campaign or _default_campaign(),
+            "route_base": _campaign_route_base(filters),
         }
 
     summary = None
@@ -554,7 +606,11 @@ def dashboard_context(filters: dict[str, str | None]) -> dict[str, Any]:
     elif not filters.get("doctor_key"):
         helper_rows = _gold_rows("dashboard_summary_state_rep")
         for row in helper_rows:
-            if clean_text(row.get("state")) == filters.get("state") and clean_text(row.get("field_rep_id")) == filters.get("field_rep_id"):
+            if (
+                clean_text(row.get("campaign_key")) == clean_text(filters.get("campaign_key"))
+                and clean_text(row.get("state")) == clean_text(filters.get("state"))
+                and clean_text(row.get("field_rep_id")) == clean_text(filters.get("field_rep_id"))
+            ):
                 summary = _summary_from_row(row)
                 break
 
@@ -595,22 +651,27 @@ def dashboard_context(filters: dict[str, str | None]) -> dict[str, Any]:
     patient_videos = [row for row in build_video_rankings(filtered_video_rows) if clean_text(row.get("audience")) == "patient"]
     doctor_videos = [row for row in build_video_rankings(filtered_video_rows) if clean_text(row.get("audience")) == "doctor"]
     certified_supported = True
+    filters_query = current_filters_query(filters, include_campaign=not clean_text(filters.get("campaign_key")))
+    campaign = selected_campaign or _default_campaign()
 
     return {
         "ready": True,
         "refresh": refresh,
         "summary": summary,
         "export_filename": f"sapa-growth-dashboard-{summary.get('as_of_date') or refresh.get('as_of_date') or 'report'}.pdf",
+        "campaign": campaign,
+        "route_base": _campaign_route_base(filters),
+        "dashboard_export_href": f"{_campaign_route_base(filters)}export/dashboard.pdf" + (f"?{filters_query}" if filters_query else ""),
         "tiles": _dashboard_tiles(summary, filters),
         "course_cards": _course_cards(filtered_course_rows, filters),
         "patient_videos": patient_videos[:5],
         "doctor_videos": doctor_videos[:5],
         "red_flag_rankings": build_red_flag_rankings(filtered_redflag_rows),
         "filters": filters,
-        "filters_query": current_filters_query(filters),
+        "filters_query": filters_query,
         "filter_options": options,
         "certified_supported": certified_supported,
-        "certified_toggle_url": f"/sapa-growth/certified-clinics/?{current_filters_query(filters)}" if current_filters_query(filters) else "/sapa-growth/certified-clinics/",
+        "certified_toggle_url": f"{_campaign_route_base(filters)}certified-clinics/" + (f"?{filters_query}" if filters_query else ""),
         "certified_rows": certified_rows,
     }
 
@@ -622,8 +683,10 @@ def certified_context(global_filters: dict[str, str | None], local_filters: dict
         "rows": rows,
         "filters": local_filters,
         "filter_options": filter_options(),
+        "route_base": _campaign_route_base(global_filters),
         "export_query": current_filters_query(
             {
+                "campaign_key": global_filters.get("campaign_key"),
                 "state": global_filters.get("state"),
                 "cert_field_rep_id": local_filters.get("field_rep_id"),
                 "cert_doctor_key": local_filters.get("doctor_key"),
@@ -633,24 +696,120 @@ def certified_context(global_filters: dict[str, str | None], local_filters: dict
     }
 
 
-def _rows_for_metric(metric: str, filters: dict[str, str | None]) -> tuple[dict[str, Any], list[dict[str, Any]], dict[str, Any]]:
+def _count_window(
+    rows: list[dict[str, Any]],
+    *,
+    date_field: str,
+    as_of: date,
+    unique_field: str | None = None,
+    predicate: Any = None,
+) -> dict[str, int]:
+    def _window(start: date | None = None, end: date | None = None) -> int:
+        if unique_field:
+            keys: set[str] = set()
+            for row in rows:
+                if predicate and not predicate(row):
+                    continue
+                row_date = parse_date(row.get(date_field))
+                if row_date is None:
+                    continue
+                if start and row_date < start:
+                    continue
+                if end and row_date > end:
+                    continue
+                key = clean_text(row.get(unique_field))
+                if key:
+                    keys.add(key)
+            return len(keys)
+        total = 0
+        for row in rows:
+            if predicate and not predicate(row):
+                continue
+            row_date = parse_date(row.get(date_field))
+            if row_date is None:
+                continue
+            if start and row_date < start:
+                continue
+            if end and row_date > end:
+                continue
+            total += 1
+        return total
+
+    return {
+        "Last 24 Hours": _window(as_of, as_of),
+        "Last Week": _window(as_of - timedelta(days=6), as_of),
+        "Last Month": _window(as_of - timedelta(days=29), as_of),
+        "Cumulative": _window(),
+    }
+
+
+def _status_history_window_counts(
+    filters: dict[str, str | None],
+    *,
+    predicate: Any,
+    as_of: date,
+) -> dict[str, int]:
+    rows = filter_rows(_gold_rows("rpt_doctor_status_history"), filters)
+    return _count_window(rows, date_field="as_of_date", as_of=as_of, unique_field="doctor_key", predicate=predicate)
+
+
+def _certified_window_counts(filters: dict[str, str | None], as_of: date) -> dict[str, int]:
+    history_rows = filter_rows(_gold_rows("rpt_doctor_status_history"), filters)
+    course_rows = filter_rows(_gold_rows("rpt_course_detail"), filters)
+    enrolled = set(_doctor_course_enrollments(course_rows).keys())
+    return _count_window(
+        history_rows,
+        date_field="as_of_date",
+        as_of=as_of,
+        unique_field="doctor_key",
+        predicate=lambda row: row.get("is_active") == "true" and clean_text(row.get("doctor_key")) in enrolled,
+    )
+
+
+def _metric_summary_cards(metric: str, filters: dict[str, str | None], refresh: dict[str, Any]) -> list[dict[str, Any]]:
+    spec = DETAIL_SPECS[metric]
+    as_of = parse_date(refresh.get("as_of_date")) or date.today()
+    summary_mode = spec.get("summary_mode")
+    if summary_mode == "status_history_active":
+        counts = _status_history_window_counts(filters, predicate=lambda row: row.get("is_active") == "true", as_of=as_of)
+    elif summary_mode == "status_history_inactive":
+        counts = _status_history_window_counts(filters, predicate=lambda row: row.get("is_inactive") == "true", as_of=as_of)
+    elif summary_mode == "status_history_certified":
+        counts = _certified_window_counts(filters, as_of)
+    else:
+        _, rows, _ = _base_rows_for_metric(metric, filters)
+        counts = _count_window(
+            rows,
+            date_field=str(spec.get("summary_date_field") or spec.get("date_field") or ""),
+            as_of=as_of,
+            unique_field=spec.get("summary_unique_field"),
+        )
+    return [{"label": label, "count": count} for label, count in counts.items()]
+
+
+def _base_rows_for_metric(metric: str, filters: dict[str, str | None]) -> tuple[dict[str, Any], list[dict[str, Any]], dict[str, Any]]:
     spec = DETAIL_SPECS.get(metric)
     if spec is None:
         raise Http404("Unknown metric")
     rows = filter_rows(_gold_rows(spec["table"]), filters)
     if spec.get("predicate"):
         rows = [row for row in rows if spec["predicate"](row)]
+    refresh = _latest_refresh() or {}
+    return spec, rows, refresh
 
+
+def _rows_for_metric(metric: str, filters: dict[str, str | None]) -> tuple[dict[str, Any], list[dict[str, Any]], dict[str, Any]]:
+    spec, rows, refresh = _base_rows_for_metric(metric, filters)
+    as_of = parse_date(refresh.get("as_of_date")) or date.today()
     if metric in {"patient_videos", "doctor_videos"}:
         rows = [
             row
             for row in build_video_rankings(_enrich_video_rows(rows))
             if clean_text(row.get("audience")) == ("patient" if metric == "patient_videos" else "doctor")
         ]
-
-    refresh = _latest_refresh()
-    as_of = parse_date((refresh or {}).get("as_of_date")) or date.today()
-    if spec.get("weekly"):
+    elif metric == "certified_clinics":
+        rows = _derived_certified_rows(filters, _gold_rows("rpt_doctor_status_current"), _gold_rows("rpt_course_detail"))
+    elif spec.get("weekly"):
         weekly_start = as_of - timedelta(days=6)
         date_field = spec.get("date_field")
         rows = [
@@ -658,9 +817,6 @@ def _rows_for_metric(metric: str, filters: dict[str, str | None]) -> tuple[dict[
             for row in rows
             if date_field and (parse_date(row.get(date_field)) and weekly_start <= parse_date(row.get(date_field)) <= as_of)
         ]
-    elif metric == "certified_clinics":
-        rows = _derived_certified_rows(filters, _gold_rows("rpt_doctor_status_current"), _gold_rows("rpt_course_detail"))
-
     date_field = spec.get("date_field")
     if date_field:
         rows.sort(key=lambda row: row.get(date_field) or "", reverse=True)
@@ -676,16 +832,21 @@ def detail_context(metric: str, filters: dict[str, str | None], page: int = 1, p
     start = (page - 1) * per_page
     end = start + per_page
     page_rows = rows[start:end]
+    filters_query = current_filters_query(filters, include_campaign=not clean_text(filters.get("campaign_key")))
     return {
         "metric": metric,
         "title": spec["title"],
+        "summary_cards": _metric_summary_cards(metric, filters, refresh),
         "columns": spec["columns"],
         "rows": page_rows,
         "row_count": total_rows,
         "page": page,
         "page_count": max(1, ceil(total_rows / per_page)) if total_rows else 1,
         "filters": filters,
-        "filters_query": current_filters_query(filters),
+        "filters_query": filters_query,
+        "route_base": _campaign_route_base(filters),
+        "dashboard_href": _campaign_route_base(filters) + (f"?{filters_query}" if filters_query else ""),
+        "export_href": f"{_campaign_route_base(filters)}details/{metric}/export/" + (f"?{filters_query}" if filters_query else ""),
         "last_updated": refresh.get("published_at", ""),
         "as_of_date": refresh.get("as_of_date", ""),
     }

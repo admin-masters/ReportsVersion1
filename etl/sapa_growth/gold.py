@@ -7,7 +7,7 @@ from django.db import connection, transaction
 
 from etl.sapa_growth.specs import GOLD_SCHEMA, GOLD_STAGE_SCHEMA, SILVER_SCHEMA
 from etl.sapa_growth.storage import ensure_schema, fetch_table, qident, replace_table
-from sapa_growth.logic import clean_text, location_label
+from sapa_growth.logic import clean_text, location_label, parse_date
 from sapa_growth.reporting import build_red_flag_rankings, build_video_rankings, compute_dashboard_metrics, course_status_counts, filter_rows
 from sapa_growth.video_metadata import resolve_video_metadata
 
@@ -18,6 +18,28 @@ def _now_iso() -> str:
 
 def _stringify_row(row: dict[str, Any]) -> dict[str, str]:
     return {key: "" if value is None else str(value) for key, value in row.items()}
+
+
+def _doctor_campaign_map(doctor_rows: list[dict[str, Any]]) -> dict[str, dict[str, str]]:
+    mapping: dict[str, dict[str, str]] = {}
+    for row in doctor_rows:
+        doctor_key = clean_text(row.get("doctor_key"))
+        if not doctor_key:
+            continue
+        mapping[doctor_key] = {
+            "campaign_key": clean_text(row.get("campaign_key")),
+            "campaign_label": clean_text(row.get("campaign_label")),
+        }
+    return mapping
+
+
+def _with_campaign_fields(row: dict[str, Any], doctor_campaigns: dict[str, dict[str, str]]) -> dict[str, Any]:
+    item = dict(row)
+    doctor_key = clean_text(item.get("doctor_key"))
+    campaign = doctor_campaigns.get(doctor_key, {})
+    item["campaign_key"] = clean_text(item.get("campaign_key")) or campaign.get("campaign_key") or ""
+    item["campaign_label"] = clean_text(item.get("campaign_label")) or campaign.get("campaign_label") or ""
+    return item
 
 
 def _enriched_video_rows(video_rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -66,6 +88,7 @@ def build_gold(run_id: str, source_status: str = "SUCCESS", stale_source_flags: 
     webinar_rows = fetch_table(SILVER_SCHEMA, "fact_webinar_registration")
     course_rows = fetch_table(SILVER_SCHEMA, "fact_course_user_progress")
     video_rows = _enriched_video_rows(fetch_table(SILVER_SCHEMA, "fact_video_view"))
+    doctor_campaigns = _doctor_campaign_map(doctor_rows)
 
     certification_by_doctor = {row.get("doctor_key"): row for row in certification_rows}
     redflag_count_by_submission: dict[str, int] = {}
@@ -113,14 +136,16 @@ def build_gold(run_id: str, source_status: str = "SUCCESS", stale_source_flags: 
     combos = sorted(
         {
             (
+                clean_text(row.get("campaign_key")) or "",
+                clean_text(row.get("campaign_label")) or "",
                 clean_text(row.get("state")) or "",
                 clean_text(row.get("field_rep_id")) or "Unassigned",
             )
             for row in doctor_rows
         }
     )
-    for state, field_rep_id in combos:
-        filters = {"state": state or None, "field_rep_id": field_rep_id or None}
+    for campaign_key, campaign_label, state, field_rep_id in combos:
+        filters = {"campaign_key": campaign_key or None, "state": state or None, "field_rep_id": field_rep_id or None}
         metrics = compute_dashboard_metrics(
             as_of_date=as_of_date,
             doctor_rows=filter_rows(doctor_rows, filters),
@@ -133,11 +158,13 @@ def build_gold(run_id: str, source_status: str = "SUCCESS", stale_source_flags: 
             reminder_rows=filter_rows(reminder_rows, filters),
             course_rows=filter_rows(course_rows, filters),
         )
+        metrics["campaign_key"] = campaign_key
+        metrics["campaign_label"] = campaign_label
         metrics["state"] = state
         metrics["field_rep_id"] = field_rep_id
         metrics["published_at"] = published_at
         summary_state_rep_rows.append(_stringify_row(metrics))
-    summary_state_rep_columns = list(summary_state_rep_rows[0].keys()) if summary_state_rep_rows else ["state", "field_rep_id", "as_of_date", "published_at"]
+    summary_state_rep_columns = list(summary_state_rep_rows[0].keys()) if summary_state_rep_rows else ["campaign_key", "campaign_label", "state", "field_rep_id", "as_of_date", "published_at"]
     replace_table(GOLD_STAGE_SCHEMA, "dashboard_summary_state_rep", summary_state_rep_columns, summary_state_rep_rows)
 
     current_status_rows = []
@@ -148,6 +175,8 @@ def build_gold(run_id: str, source_status: str = "SUCCESS", stale_source_flags: 
             _stringify_row(
                 {
                     "doctor_key": doctor.get("doctor_key"),
+                    "campaign_key": doctor.get("campaign_key"),
+                    "campaign_label": doctor.get("campaign_label"),
                     "doctor_display_name": doctor.get("canonical_display_name"),
                     "city": doctor.get("city"),
                     "district": doctor.get("district"),
@@ -171,6 +200,8 @@ def build_gold(run_id: str, source_status: str = "SUCCESS", stale_source_flags: 
         "rpt_doctor_status_current",
         [
             "doctor_key",
+            "campaign_key",
+            "campaign_label",
             "doctor_display_name",
             "city",
             "district",
@@ -196,6 +227,8 @@ def build_gold(run_id: str, source_status: str = "SUCCESS", stale_source_flags: 
         list(doctor_status_history_rows[0].keys()) if doctor_status_history_rows else [
             "as_of_date",
             "doctor_key",
+            "campaign_key",
+            "campaign_label",
             "doctor_display_name",
             "screenings_last_15d",
             "is_active",
@@ -207,15 +240,17 @@ def build_gold(run_id: str, source_status: str = "SUCCESS", stale_source_flags: 
             "state",
             "field_rep_id",
         ],
-        [_stringify_row(row) for row in doctor_status_history_rows],
+        [_stringify_row(_with_campaign_fields(row, doctor_campaigns)) for row in doctor_status_history_rows],
     )
 
-    screening_detail_rows = [_stringify_row(row) for row in screening_rows]
+    screening_detail_rows = [_stringify_row(_with_campaign_fields(row, doctor_campaigns)) for row in screening_rows]
     screening_detail_columns = list(screening_detail_rows[0].keys()) if screening_detail_rows else [
         "submission_key",
         "source_table",
         "source_submission_id",
         "doctor_key",
+        "campaign_key",
+        "campaign_label",
         "patient_id",
         "form_identifier",
         "language_code",
@@ -238,7 +273,7 @@ def build_gold(run_id: str, source_status: str = "SUCCESS", stale_source_flags: 
         overall_flag = clean_text(row.get("overall_flag_code"))
         if overall_flag not in {"red", "yellow"}:
             continue
-        tag_row = dict(row)
+        tag_row = _with_campaign_fields(row, doctor_campaigns)
         tag_row["tag_color"] = overall_flag
         tag_row["individual_red_flag_count"] = str(redflag_count_by_submission.get(row.get("submission_key") or "", 0))
         tag_detail_rows.append(_stringify_row(tag_row))
@@ -274,42 +309,42 @@ def build_gold(run_id: str, source_status: str = "SUCCESS", stale_source_flags: 
             "state",
             "field_rep_id",
         ],
-        [_stringify_row(row) for row in followup_rows],
+        [_stringify_row(_with_campaign_fields(row, doctor_campaigns)) for row in followup_rows],
     )
 
     replace_table(
         GOLD_STAGE_SCHEMA,
         "rpt_reminder_sent_detail",
         list(reminder_rows[0].keys()) if reminder_rows else ["metric_event_id", "doctor_key", "patient_id", "ts", "action_key", "doctor_display_name", "city", "district", "state", "field_rep_id"],
-        [_stringify_row(row) for row in reminder_rows],
+        [_stringify_row(_with_campaign_fields(row, doctor_campaigns)) for row in reminder_rows],
     )
 
     replace_table(
         GOLD_STAGE_SCHEMA,
         "rpt_webinar_registration_detail",
         list(webinar_rows[0].keys()) if webinar_rows else ["registration_key", "event_id", "event_title", "start_date", "end_date", "timezone", "email", "first_name", "last_name", "phone", "registration_effective_date", "doctor_key", "doctor_display_name", "state", "city", "field_rep_id", "match_method", "unmapped_flag"],
-        [_stringify_row(row) for row in webinar_rows],
+        [_stringify_row(_with_campaign_fields(row, doctor_campaigns)) for row in webinar_rows],
     )
 
     replace_table(
         GOLD_STAGE_SCHEMA,
         "rpt_course_detail",
         list(course_rows[0].keys()) if course_rows else ["extract_snapshot_date", "course_id", "course_audience", "user_id", "display_name", "user_email", "first_name", "last_name", "phone", "progress_status", "enrolled_at", "started_at", "completed_at", "dashboard_status", "doctor_key", "doctor_display_name", "state", "city", "field_rep_id", "match_method", "unmapped_flag"],
-        [_stringify_row(row) for row in course_rows],
+        [_stringify_row(_with_campaign_fields(row, doctor_campaigns)) for row in course_rows],
     )
 
     replace_table(
         GOLD_STAGE_SCHEMA,
         "rpt_submission_redflag_detail",
         list(redflag_rows[0].keys()) if redflag_rows else ["source_row_id", "submission_key", "source_submission_id", "doctor_key", "red_flag", "submitted_at", "doctor_display_name", "city", "district", "state", "field_rep_id"],
-        [_stringify_row(row) for row in redflag_rows],
+        [_stringify_row(_with_campaign_fields(row, doctor_campaigns)) for row in redflag_rows],
     )
 
     replace_table(
         GOLD_STAGE_SCHEMA,
         "rpt_video_view_detail",
         list(video_rows[0].keys()) if video_rows else ["metric_event_id", "doctor_key", "patient_id", "audience", "content_identifier", "video_url", "video_title", "preferred_display_label", "action_key", "event_type", "ts", "doctor_display_name", "city", "district", "state", "field_rep_id"],
-        [_stringify_row(row) for row in video_rows],
+        [_stringify_row(_with_campaign_fields(row, doctor_campaigns)) for row in video_rows],
     )
 
     course_summary_counts = course_status_counts(course_rows)
@@ -392,14 +427,27 @@ def build_gold(run_id: str, source_status: str = "SUCCESS", stale_source_flags: 
     )
 
     filter_state_rows = []
+    filter_campaign_rows = []
     filter_field_rep_rows = []
     filter_doctor_rows = []
     filter_city_rows = []
+    unique_campaigns = sorted(
+        {
+            (
+                clean_text(row.get("campaign_key")) or "",
+                clean_text(row.get("campaign_label")) or clean_text(row.get("campaign_key")) or "",
+            )
+            for row in doctor_rows
+        },
+        key=lambda item: (item[1], item[0]),
+    )
     unique_states = sorted({clean_text(row.get("state")) or "" for row in doctor_rows})
     unique_reps = sorted({clean_text(row.get("field_rep_id")) or "Unassigned" for row in doctor_rows})
     unique_doctors = sorted(doctor_rows, key=lambda row: (row.get("canonical_display_name") or "", row.get("doctor_key") or ""))
     unique_cities = sorted({clean_text(row.get("city")) or "" for row in doctor_rows})
 
+    for index, (campaign_key, campaign_label) in enumerate(unique_campaigns, start=1):
+        filter_campaign_rows.append(_stringify_row({"display_label": campaign_label or campaign_key or "Unknown", "underlying_key": campaign_key, "sort_order": index, "active_flag": "true", "unknown_flag": "true" if not campaign_key else "false"}))
     for index, value in enumerate(unique_states, start=1):
         filter_state_rows.append(_stringify_row({"display_label": value or "Unknown", "underlying_key": value, "sort_order": index, "active_flag": "true", "unknown_flag": "true" if not value else "false"}))
     for index, value in enumerate(unique_reps, start=1):
@@ -409,6 +457,7 @@ def build_gold(run_id: str, source_status: str = "SUCCESS", stale_source_flags: 
     for index, value in enumerate(unique_cities, start=1):
         filter_city_rows.append(_stringify_row({"display_label": value or "Unknown", "underlying_key": value, "sort_order": index, "active_flag": "true", "unknown_flag": "true" if not value else "false"}))
 
+    replace_table(GOLD_STAGE_SCHEMA, "dim_filter_campaign", ["display_label", "underlying_key", "sort_order", "active_flag", "unknown_flag"], filter_campaign_rows)
     replace_table(GOLD_STAGE_SCHEMA, "dim_filter_state", ["display_label", "underlying_key", "sort_order", "active_flag", "unknown_flag"], filter_state_rows)
     replace_table(GOLD_STAGE_SCHEMA, "dim_filter_field_rep", ["display_label", "underlying_key", "sort_order", "active_flag", "unknown_flag"], filter_field_rep_rows)
     replace_table(GOLD_STAGE_SCHEMA, "dim_filter_doctor", ["display_label", "underlying_key", "sort_order", "active_flag", "unknown_flag"], filter_doctor_rows)
@@ -433,6 +482,7 @@ def build_gold(run_id: str, source_status: str = "SUCCESS", stale_source_flags: 
         "rpt_red_flag_rankings",
         "rpt_condition_rankings",
         "rpt_certified_clinics",
+        "dim_filter_campaign",
         "dim_filter_state",
         "dim_filter_field_rep",
         "dim_filter_doctor",
