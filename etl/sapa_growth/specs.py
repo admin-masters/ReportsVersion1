@@ -97,6 +97,7 @@ MYSQL_TABLE_SPECS: dict[str, SourceTableSpec] = {
         columns=["record_id", "language_code", "submitted_at", "patient_id", "doctor_id", "form_id", "overall_flag_code"],
         key_columns=["record_id"],
         watermark_field="submitted_at",
+        lookback_days=3650,
     ),
     "gnd_gndpatientsubmission": SourceTableSpec(
         source_table="gnd_gndpatientsubmission",
@@ -104,6 +105,7 @@ MYSQL_TABLE_SPECS: dict[str, SourceTableSpec] = {
         columns=["id", "patient_id", "language_code", "submitted_at", "doctor_id", "form_id", "overall_flag_code"],
         key_columns=["id"],
         watermark_field="submitted_at",
+        lookback_days=3650,
     ),
     "redflags_submissionredflag": SourceTableSpec(
         source_table="redflags_submissionredflag",
