@@ -7,9 +7,13 @@
 <nav class="ida-toolbar">
   <a class="ida-button ida-button-secondary" href="{% url 'internal-data-admin-row' table.schema table.name %}?token={{ token|urlencode }}">Back to Record</a>
   <a class="ida-button ida-button-secondary" href="{% url 'internal-data-admin-table' table.schema table.name %}">Back to Table</a>
+  <a class="ida-button ida-button-secondary" href="{{ system_context.home_href }}">Back to {{ system_context.profile.short_label }}</a>
 </nav>
 
 <section class="ida-panel ida-delete-panel">
+  <p class="ida-eyebrow">{{ system_context.profile.short_label }} / {{ system_context.layer }}</p>
+  <p class="ida-muted">{{ cleanup_note }}</p>
+
   <div class="ida-danger-box">
     <strong>Delete requires explicit confirmation.</strong>
     <span>This action is audited and runs in a transaction. It is blocked when dependent records are detected.</span>

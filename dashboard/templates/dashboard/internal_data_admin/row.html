@@ -6,9 +6,15 @@
 {% block content %}
 <nav class="ida-toolbar">
   <a class="ida-button ida-button-secondary" href="{% url 'internal-data-admin-table' table.schema table.name %}">Back to Table</a>
+  <a class="ida-button ida-button-secondary" href="{{ system_context.home_href }}">Back to {{ system_context.profile.short_label }}</a>
   <a class="ida-button" href="{% url 'internal-data-admin-edit' table.schema table.name %}?token={{ token|urlencode }}">Edit</a>
   <a class="ida-button ida-button-danger" href="{% url 'internal-data-admin-delete' table.schema table.name %}?token={{ token|urlencode }}">Delete</a>
 </nav>
+
+<section class="ida-panel ida-context-panel">
+  <p class="ida-eyebrow">{{ system_context.profile.short_label }} / {{ system_context.layer }}</p>
+  <p class="ida-muted">{{ cleanup_note }}</p>
+</section>
 
 <section class="ida-panel">
   <div class="ida-table-meta">

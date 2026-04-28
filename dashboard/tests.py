@@ -6,7 +6,7 @@ from django.test import RequestFactory, SimpleTestCase
 from django.urls import resolve
 
 import dashboard.views
-from dashboard.internal_data_admin import _is_relevant_schema
+from dashboard.internal_data_admin import _is_relevant_schema, _system_key_for_schema
 
 
 class DashboardRoutingTests(SimpleTestCase):
@@ -22,6 +22,7 @@ class DashboardRoutingTests(SimpleTestCase):
         self.assertEqual(resolve("/_internal/data-admin/").view_name, "internal-data-admin-home")
         self.assertEqual(resolve("/_internal/data-admin/login/").view_name, "internal-data-admin-login")
         self.assertEqual(resolve("/_internal/data-admin/bronze/campaign_campaign/").view_name, "internal-data-admin-table")
+        self.assertEqual(resolve("/_internal/data-admin/bronze/campaign_campaign/bulk-delete/").view_name, "internal-data-admin-bulk-delete")
 
     def test_internal_data_admin_schema_filter(self):
         self.assertTrue(_is_relevant_schema("bronze"))
@@ -29,6 +30,13 @@ class DashboardRoutingTests(SimpleTestCase):
         self.assertTrue(_is_relevant_schema("silver_sapa"))
         self.assertFalse(_is_relevant_schema("public"))
         self.assertFalse(_is_relevant_schema("information_schema"))
+
+    def test_internal_data_admin_system_mapping(self):
+        self.assertEqual(_system_key_for_schema("raw_server1"), "inclinic")
+        self.assertEqual(_system_key_for_schema("gold_campaign_demo"), "inclinic")
+        self.assertEqual(_system_key_for_schema("gold_sapa"), "sapa")
+        self.assertEqual(_system_key_for_schema("raw_pe_portal"), "pe")
+        self.assertEqual(_system_key_for_schema("control"), "shared")
 
 
 class DashboardAccessViewTests(SimpleTestCase):

@@ -6,14 +6,52 @@
 {% block content %}
 <section class="ida-band">
   <div>
-    <h2>Managed Reporting Tables</h2>
-    <p class="ida-muted">Only reporting schemas are exposed here. Django auth/session tables are intentionally excluded from this internal tool.</p>
+    <h2>System Cleanup Workspace</h2>
+    <p class="ida-muted">Tables are grouped by reporting system so cleanup starts in the right place. You usually do not delete from every table; clean source/RAW rows first, then rerun the relevant ETL so derived layers rebuild.</p>
   </div>
   <div class="ida-safety-note">
     <strong>Safety model</strong>
     <span>Changes are audited, wrapped in transactions, and deletes are blocked when dependent records are detected.</span>
   </div>
 </section>
+
+<section class="ida-system-grid" aria-label="Reporting systems">
+  <a class="ida-system-card {% if selected_system == 'all' %}selected{% endif %}" href="{% url 'internal-data-admin-home' %}?system=all">
+    <strong>All Systems</strong>
+    <span>Show every managed reporting table.</span>
+  </a>
+  {% for card in system_cards %}
+  <a class="ida-system-card {% if card.is_selected %}selected{% endif %}" href="{{ card.href }}">
+    <strong>{{ card.profile.label }}</strong>
+    <span>{{ card.table_count }} tables / {{ card.row_count }} rows</span>
+    <small>{{ card.profile.cleanup_summary }}</small>
+  </a>
+  {% endfor %}
+</section>
+
+{% if selected_profile %}
+<section class="ida-panel ida-guidance-panel">
+  <div>
+    <p class="ida-eyebrow">{{ selected_profile.short_label }} Cleanup Notes</p>
+    <h2>{{ selected_profile.label }}</h2>
+    <p class="ida-muted">{{ selected_profile.description }}</p>
+  </div>
+  <div class="ida-guidance-grid">
+    <div>
+      <strong>Where to start</strong>
+      <p>{{ selected_profile.source_guidance }}</p>
+    </div>
+    <div>
+      <strong>Recommended order</strong>
+      <ol>
+        {% for step in selected_profile.cleanup_steps %}
+        <li>{{ step }}</li>
+        {% endfor %}
+      </ol>
+    </div>
+  </div>
+</section>
+{% endif %}
 
 {% for group in table_groups %}
 <section class="ida-section">
@@ -25,6 +63,7 @@
     {% for table in group.tables %}
     <a class="ida-table-card" href="{{ table.href }}">
       <strong>{{ table.name }}</strong>
+      <span>{{ table.system_label }} / {{ table.layer }}</span>
       <span>{% if table.row_count is None %}count unavailable{% else %}{{ table.row_count }} records{% endif %}</span>
     </a>
     {% endfor %}
