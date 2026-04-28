@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - main
+  workflow_dispatch:
 
 # change to main/testing if that's your deploy branch
 jobs:
