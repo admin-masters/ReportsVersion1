@@ -5,9 +5,21 @@
 
 {% block content %}
 <nav class="ida-toolbar">
-  <a class="ida-button ida-button-secondary" href="{% url 'internal-data-admin-home' %}">All Tables</a>
+  <a class="ida-button ida-button-secondary" href="{{ system_context.home_href }}">Back to {{ system_context.profile.short_label }}</a>
   <a class="ida-button" href="{% url 'internal-data-admin-new' table.schema table.name %}">Create Record</a>
 </nav>
+
+<section class="ida-panel ida-context-panel">
+  <div>
+    <p class="ida-eyebrow">{{ system_context.profile.short_label }} / {{ system_context.layer }}</p>
+    <h2>{{ table.schema }}.{{ table.name }}</h2>
+    <p class="ida-muted">{{ cleanup_note }}</p>
+  </div>
+  <div class="ida-safety-note">
+    <strong>Bulk delete</strong>
+    <span>Select records below, review dependencies, then confirm with <code>{{ bulk_phrase }}</code>.</span>
+  </div>
+</section>
 
 <section class="ida-panel">
   <div class="ida-table-meta">
@@ -15,10 +27,18 @@
     <span>Primary key: {% if table.primary_key %}{{ table.primary_key|join:", " }}{% else %}none; rows use signed ctid locators{% endif %}</span>
   </div>
 
+  <form method="post" action="{% url 'internal-data-admin-bulk-delete' table.schema table.name %}">
+    {% csrf_token %}
+    <div class="ida-bulk-bar">
+      <span>Select rows to delete in one controlled batch.</span>
+      <button class="ida-button ida-button-danger" type="submit">Review Selected Delete</button>
+    </div>
+
   <div class="ida-scroll">
     <table class="ida-data-table">
       <thead>
         <tr>
+          <th>Select</th>
           <th>Record</th>
           {% for column in display_columns %}
           <th>{{ column }}</th>
@@ -29,6 +49,7 @@
       <tbody>
         {% for row in rows %}
         <tr>
+          <td><input class="ida-row-check" type="checkbox" name="row_token" value="{{ row.token }}"></td>
           <td><code>{{ row.identity }}</code></td>
           {% for cell in row.cells %}
           <td data-label="{{ cell.name }}">{{ cell.value }}</td>
@@ -40,11 +61,12 @@
           </td>
         </tr>
         {% empty %}
-        <tr><td colspan="{{ display_columns|length|add:2 }}">No records found.</td></tr>
+        <tr><td colspan="{{ display_columns|length|add:3 }}">No records found.</td></tr>
         {% endfor %}
       </tbody>
     </table>
   </div>
+  </form>
 
   <div class="ida-pagination">
     {% if previous_page %}

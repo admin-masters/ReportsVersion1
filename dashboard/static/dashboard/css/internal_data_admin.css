@@ -92,6 +92,64 @@ code {
   margin-bottom: 16px;
 }
 
+.ida-system-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.ida-system-card {
+  display: grid;
+  gap: 6px;
+  min-height: 128px;
+  padding: 14px;
+  border: 1px solid var(--ida-line);
+  border-radius: 8px;
+  background: var(--ida-panel);
+  color: var(--ida-text);
+}
+
+.ida-system-card.selected,
+.ida-system-card:hover {
+  border-color: #8eb0d8;
+  background: #f4f8fd;
+}
+
+.ida-system-card span {
+  color: var(--ida-muted);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.ida-system-card small {
+  color: var(--ida-muted);
+  line-height: 1.45;
+}
+
+.ida-guidance-panel,
+.ida-context-panel {
+  margin-bottom: 14px;
+}
+
+.ida-guidance-grid {
+  display: grid;
+  grid-template-columns: minmax(240px, .7fr) minmax(280px, 1.3fr);
+  gap: 16px;
+  margin-top: 14px;
+}
+
+.ida-guidance-grid p,
+.ida-guidance-grid ol {
+  margin: 7px 0 0;
+  color: var(--ida-muted);
+  line-height: 1.55;
+}
+
+.ida-guidance-grid li + li {
+  margin-top: 6px;
+}
+
 .ida-band h2,
 .ida-section h2 {
   margin: 0;
@@ -207,6 +265,25 @@ code {
   overflow: auto;
   border: 1px solid var(--ida-line);
   border-radius: 8px;
+}
+
+.ida-bulk-bar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 10px;
+  padding: 10px 12px;
+  border: 1px solid #d5e1ef;
+  border-radius: 8px;
+  background: var(--ida-panel-soft);
+  color: var(--ida-muted);
+  font-weight: 700;
+}
+
+.ida-row-check {
+  width: 18px;
+  height: 18px;
 }
 
 .ida-data-table {
@@ -382,6 +459,30 @@ code {
   margin-bottom: 10px;
 }
 
+.ida-bulk-confirm {
+  margin-top: 14px;
+}
+
+.ida-status {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
+  padding: 0 8px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.ida-status-ready {
+  background: var(--ida-green-soft);
+  color: #14613a;
+}
+
+.ida-status-blocked {
+  background: var(--ida-red-soft);
+  color: #7d211d;
+}
+
 .ida-login-panel {
   width: min(520px, 100%);
   margin: 80px auto 0;
@@ -438,5 +539,14 @@ code {
 
   .ida-field-grid {
     grid-template-columns: 1fr;
+  }
+
+  .ida-guidance-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .ida-bulk-bar {
+    align-items: stretch;
+    flex-direction: column;
   }
 }

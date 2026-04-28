@@ -46,6 +46,76 @@ class TableInfo:
     primary_key: list[str]
 
 
+@dataclass(frozen=True)
+class SystemProfile:
+    key: str
+    label: str
+    short_label: str
+    description: str
+    cleanup_summary: str
+    source_guidance: str
+    cleanup_steps: list[str]
+
+
+SYSTEM_PROFILES = {
+    "inclinic": SystemProfile(
+        key="inclinic",
+        label="Inclinic Reporting",
+        short_label="Inclinic",
+        description="In-clinic sharing campaign data from MySQL source copies through RAW, BRONZE, SILVER, and campaign GOLD schemas.",
+        cleanup_summary="Usually delete source/raw rows first, then rerun Inclinic ETL. Do not chase every derived row unless you are clearing stale report output before a rebuild.",
+        source_guidance="Start with raw_server2 campaign, collateral, share, and transaction tables; use raw_server1 only for campaign and field-rep mapping rows.",
+        cleanup_steps=[
+            "Remove campaign identity rows from raw_server2.campaign_management_campaign and raw_server1.campaign_campaign.",
+            "Remove engagement rows from raw_server2.sharing_management_collateraltransaction and raw_server2.sharing_management_sharelog.",
+            "Remove campaign collateral bridge rows before collateral rows when the collateral belongs only to that dummy campaign.",
+            "Rerun the Inclinic ETL so bronze, silver, gold_global, and gold_campaign_* rebuild from the cleaned source state.",
+        ],
+    ),
+    "sapa": SystemProfile(
+        key="sapa",
+        label="SAPA / RFA",
+        short_label="SAPA/RFA",
+        description="Red Flag Alert and SAPA Growth data across raw_sapa_*, bronze_sapa, silver_sapa, and gold_sapa reporting tables.",
+        cleanup_summary="Prefer deleting seeded/source rows from raw_sapa_mysql or raw_sapa_api and then rerunning the SAPA pipeline.",
+        source_guidance="Use raw_sapa_mysql for campaign, doctor, clinic, screening, follow-up, reminder, and metric-event records; use raw_sapa_api for WordPress webinar/course/video fixture rows.",
+        cleanup_steps=[
+            "Delete test doctors, clinic mappings, and campaign rows from raw_sapa_mysql before derived SAPA tables.",
+            "Delete matching WordPress fixture records from raw_sapa_api when course/webinar/video data was test-only.",
+            "Rerun the SAPA/RFA ETL so bronze_sapa, silver_sapa, and gold_sapa are republished consistently.",
+            "Delete directly from gold_sapa only when you need to clear stale dashboard output before a full rebuild.",
+        ],
+    ),
+    "pe": SystemProfile(
+        key="pe",
+        label="Patient Education",
+        short_label="PE",
+        description="Patient Education campaign data across raw_pe_*, bronze_pe, silver_pe, gold_pe_global, and gold_pe_campaign_* schemas.",
+        cleanup_summary="Prefer deleting raw PE campaign/share/playback rows and rerunning PE ETL; derived PE schemas should normally be rebuilt.",
+        source_guidance="Use raw_pe_master for campaign, enrollment, doctor, brand, field-rep, trigger, and catalog records; use raw_pe_portal for share, playback, and banner-click activity.",
+        cleanup_steps=[
+            "Remove campaign and enrollment records from raw_pe_master when retiring a dummy PE campaign.",
+            "Remove share, playback, and banner-click activity from raw_pe_portal for that test campaign.",
+            "Only delete catalog/video/bundle records when they were created exclusively for the dummy campaign.",
+            "Rerun PE ETL so bronze_pe, silver_pe, gold_pe_global, and gold_pe_campaign_* are rebuilt safely.",
+        ],
+    ),
+    "shared": SystemProfile(
+        key="shared",
+        label="Shared Ops / Control",
+        short_label="Shared",
+        description="Operational tables used by multiple pipelines, including ETL run logs, rules, and dashboard audit records.",
+        cleanup_summary="These tables control or describe pipeline behavior. Clean logs and rules deliberately; do not delete audit history casually.",
+        source_guidance="Use control tables for run-log cleanup and ops tables for rules/configuration cleanup.",
+        cleanup_steps=[
+            "Delete old control.etl_run_log rows only when historical troubleshooting data is no longer needed.",
+            "Delete or disable ops rules only after confirming the relevant pipeline no longer depends on them.",
+            "The internal dashboard audit table is hidden from CRUD to preserve mutation history.",
+        ],
+    ),
+}
+
+
 def _admin_config() -> dict[str, str]:
     return getattr(settings, "INTERNAL_DATA_ADMIN", {})
 
@@ -80,6 +150,51 @@ def _is_relevant_schema(schema: str) -> bool:
 
 def _is_managed_table(schema: str, table: str) -> bool:
     return _is_relevant_schema(schema) and not (schema == AUDIT_SCHEMA and table == AUDIT_TABLE)
+
+
+def _system_key_for_schema(schema: str) -> str:
+    if schema in {"raw_server1", "raw_server2", "bronze", "silver", "gold_global"} or schema.startswith("gold_campaign_"):
+        return "inclinic"
+    if schema in {"raw_sapa_mysql", "raw_sapa_api", "bronze_sapa", "silver_sapa", "gold_sapa", "gold_sapa_stage"}:
+        return "sapa"
+    if schema in {"raw_pe_master", "raw_pe_portal", "bronze_pe", "silver_pe", "gold_pe_global"} or schema.startswith("gold_pe_campaign_"):
+        return "pe"
+    if schema in {"control", "ops"}:
+        return "shared"
+    return "shared"
+
+
+def _system_profile_for_schema(schema: str) -> SystemProfile:
+    return SYSTEM_PROFILES[_system_key_for_schema(schema)]
+
+
+def _layer_for_schema(schema: str) -> str:
+    if schema.startswith("raw_") or schema in {"raw_server1", "raw_server2"}:
+        return "RAW source copy"
+    if schema.startswith("bronze") or schema == "bronze":
+        return "BRONZE derived"
+    if schema.startswith("silver") or schema == "silver":
+        return "SILVER derived"
+    if schema.startswith("gold"):
+        return "GOLD report output"
+    if schema == "control":
+        return "CONTROL run metadata"
+    if schema == "ops":
+        return "OPS rules/config"
+    return "Reporting table"
+
+
+def _table_cleanup_note(info: TableInfo) -> str:
+    layer = _layer_for_schema(info.schema)
+    if layer == "RAW source copy":
+        return "Best cleanup starting point. Delete dummy/test/source-removed records here, then rerun the matching ETL so derived layers regenerate."
+    if layer in {"BRONZE derived", "SILVER derived", "GOLD report output"}:
+        return "Derived table. You usually do not need to delete here table by table; clean RAW/source rows and rerun ETL. Direct delete is for emergency stale or corrupt derived output only."
+    if info.schema == "control":
+        return "Run metadata. Safe to prune old logs when no longer needed, but this does not remove campaign data."
+    if info.schema == "ops":
+        return "Operational rules/configuration. Deleting here can change future pipeline behavior, so use a clear reason."
+    return "Review dependencies before changing this table."
 
 
 def _ensure_audit_table() -> None:
@@ -134,12 +249,16 @@ def _list_tables() -> list[dict[str, Any]]:
         table = row["table_name"]
         if not _is_managed_table(schema, table):
             continue
+        system = _system_profile_for_schema(schema)
         tables.append(
             {
                 "schema": schema,
                 "name": table,
                 "row_count": _table_count(schema, table),
                 "href": reverse("internal-data-admin-table", args=[schema, table]),
+                "system_key": system.key,
+                "system_label": system.short_label,
+                "layer": _layer_for_schema(schema),
             }
         )
     return tables
@@ -490,6 +609,87 @@ def _group_tables(tables: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return [{"schema": schema, "tables": rows} for schema, rows in groups.items()]
 
 
+def _system_cards(tables: list[dict[str, Any]], selected_system: str) -> list[dict[str, Any]]:
+    cards: list[dict[str, Any]] = []
+    for profile in SYSTEM_PROFILES.values():
+        profile_tables = [table for table in tables if table["system_key"] == profile.key]
+        cards.append(
+            {
+                "profile": profile,
+                "table_count": len(profile_tables),
+                "row_count": sum(table["row_count"] or 0 for table in profile_tables),
+                "is_selected": selected_system == profile.key,
+                "href": f"{reverse('internal-data-admin-home')}?system={profile.key}",
+            }
+        )
+    return cards
+
+
+def _selected_system(request: HttpRequest) -> str:
+    requested = (request.GET.get("system") or "all").strip().lower()
+    if requested in SYSTEM_PROFILES or requested == "all":
+        return requested
+    return "all"
+
+
+def _current_system_context(schema: str) -> dict[str, Any]:
+    profile = _system_profile_for_schema(schema)
+    return {
+        "profile": profile,
+        "layer": _layer_for_schema(schema),
+        "home_href": f"{reverse('internal-data-admin-home')}?system={profile.key}",
+    }
+
+
+def _load_selected_rows(info: TableInfo, tokens: list[str]) -> list[dict[str, Any]]:
+    selected: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for token in tokens:
+        if not token or token in seen:
+            continue
+        seen.add(token)
+        locator = _load_locator(info.schema, info.name, token)
+        row = _select_row(info, locator)
+        if not row:
+            continue
+        dependencies = _delete_dependencies(info, row, locator)
+        selected.append(
+            {
+                "token": token,
+                "locator": locator,
+                "row": row,
+                "identity": _row_identity(info, row),
+                "dependencies": dependencies,
+                "dependency_count": len(dependencies),
+            }
+        )
+    return selected
+
+
+def _bulk_delete_selected(info: TableInfo, selected_rows: list[dict[str, Any]], reason: str, actor: str) -> int:
+    deleted_count = 0
+    with transaction.atomic():
+        for selected in selected_rows:
+            before = _select_row(info, selected["locator"], lock=True)
+            if not before:
+                continue
+            latest_dependencies = _delete_dependencies(info, before, selected["locator"])
+            if latest_dependencies:
+                raise DatabaseError(f"Delete blocked for {selected['identity']} because dependencies appeared while processing.")
+            where_sql, where_params = _where_clause(selected["locator"])
+            _execute(
+                sql.SQL("DELETE FROM {}.{} WHERE {}").format(
+                    sql.Identifier(info.schema),
+                    sql.Identifier(info.name),
+                    where_sql,
+                ),
+                where_params,
+            )
+            _audit("bulk_delete", info, selected["locator"], before, None, reason, actor)
+            deleted_count += 1
+    return deleted_count
+
+
 @never_cache
 @require_http_methods(["GET", "POST"])
 def internal_data_admin_login(request: HttpRequest) -> HttpResponse:
@@ -524,11 +724,22 @@ def internal_data_admin_home(request: HttpRequest) -> HttpResponse:
         return auth_redirect
 
     _ensure_audit_table()
+    all_tables = _list_tables()
+    selected_system = _selected_system(request)
+    visible_tables = (
+        all_tables
+        if selected_system == "all"
+        else [table for table in all_tables if table["system_key"] == selected_system]
+    )
+    selected_profile = SYSTEM_PROFILES.get(selected_system)
     return render(
         request,
         "dashboard/internal_data_admin/home.html",
         {
-            "table_groups": _group_tables(_list_tables()),
+            "system_cards": _system_cards(all_tables, selected_system),
+            "selected_system": selected_system,
+            "selected_profile": selected_profile,
+            "table_groups": _group_tables(visible_tables),
             "actor": request.session.get(SESSION_USER_KEY, "internal_admin"),
         },
     )
@@ -541,6 +752,7 @@ def internal_data_admin_table(request: HttpRequest, schema: str, table: str) -> 
         return auth_redirect
 
     info = _table_info(schema, table)
+    system_context = _current_system_context(schema)
     page = max(int(request.GET.get("page") or "1"), 1)
     offset = (page - 1) * PAGE_SIZE
     display_columns = _display_columns(info)
@@ -579,6 +791,9 @@ def internal_data_admin_table(request: HttpRequest, schema: str, table: str) -> 
             "page": page,
             "previous_page": page - 1 if page > 1 else None,
             "next_page": page + 1 if has_next else None,
+            "system_context": system_context,
+            "cleanup_note": _table_cleanup_note(info),
+            "bulk_phrase": f"DELETE SELECTED {schema}.{table}",
         },
     )
 
@@ -590,6 +805,7 @@ def internal_data_admin_row(request: HttpRequest, schema: str, table: str) -> Ht
         return auth_redirect
 
     info = _table_info(schema, table)
+    system_context = _current_system_context(schema)
     token = request.GET.get("token") or ""
     locator = _load_locator(schema, table, token)
     row = _select_row(info, locator)
@@ -607,6 +823,8 @@ def internal_data_admin_row(request: HttpRequest, schema: str, table: str) -> Ht
             "fields": [{"name": column.name, "value": _format_value(row.get(column.name), 600)} for column in info.columns],
             "dependencies": dependencies[:20],
             "dependency_count": len(dependencies),
+            "system_context": system_context,
+            "cleanup_note": _table_cleanup_note(info),
         },
     )
 
@@ -619,6 +837,7 @@ def internal_data_admin_new(request: HttpRequest, schema: str, table: str) -> Ht
         return auth_redirect
 
     info = _table_info(schema, table)
+    system_context = _current_system_context(schema)
     columns = _creatable_columns(info)
     if request.method == "POST":
         values = _form_values(request, columns)
@@ -661,6 +880,8 @@ def internal_data_admin_new(request: HttpRequest, schema: str, table: str) -> Ht
         {
             "mode": "Create",
             "table": info,
+            "system_context": system_context,
+            "cleanup_note": _table_cleanup_note(info),
             "fields": [
                 {
                     "name": column.name,
@@ -684,6 +905,7 @@ def internal_data_admin_edit(request: HttpRequest, schema: str, table: str) -> H
         return auth_redirect
 
     info = _table_info(schema, table)
+    system_context = _current_system_context(schema)
     token = request.GET.get("token") or ""
     locator = _load_locator(schema, table, token)
     row = _select_row(info, locator)
@@ -735,6 +957,8 @@ def internal_data_admin_edit(request: HttpRequest, schema: str, table: str) -> H
             "table": info,
             "token": token,
             "identity": _row_identity(info, row),
+            "system_context": system_context,
+            "cleanup_note": _table_cleanup_note(info),
             "fields": [
                 {
                     "name": column.name,
@@ -758,6 +982,7 @@ def internal_data_admin_delete(request: HttpRequest, schema: str, table: str) ->
         return auth_redirect
 
     info = _table_info(schema, table)
+    system_context = _current_system_context(schema)
     token = request.GET.get("token") or ""
     locator = _load_locator(schema, table, token)
     row = _select_row(info, locator)
@@ -811,5 +1036,63 @@ def internal_data_admin_delete(request: HttpRequest, schema: str, table: str) ->
             "dependencies": dependencies,
             "phrase": phrase,
             "can_delete": not dependencies,
+            "system_context": system_context,
+            "cleanup_note": _table_cleanup_note(info),
+        },
+    )
+
+
+@never_cache
+@require_http_methods(["POST"])
+def internal_data_admin_bulk_delete(request: HttpRequest, schema: str, table: str) -> HttpResponse:
+    auth_redirect = _require_auth(request)
+    if auth_redirect:
+        return auth_redirect
+
+    info = _table_info(schema, table)
+    system_context = _current_system_context(schema)
+    tokens = request.POST.getlist("row_token")
+    selected_rows = _load_selected_rows(info, tokens)
+    phrase = f"DELETE SELECTED {schema}.{table}"
+
+    if not selected_rows:
+        messages.error(request, "Select at least one record before using bulk delete.")
+        return redirect("internal-data-admin-table", schema=schema, table=table)
+
+    blocked_count = sum(1 for row in selected_rows if row["dependencies"])
+    if request.POST.get("bulk_action") == "delete":
+        confirmation = (request.POST.get("confirmation") or "").strip()
+        reason = (request.POST.get("reason") or "").strip()
+        if blocked_count:
+            messages.error(request, "Bulk delete blocked because one or more selected records have dependencies.")
+        elif confirmation != phrase:
+            messages.error(request, f'Type "{phrase}" to confirm bulk delete.')
+        elif len(reason) < 8:
+            messages.error(request, "Please provide a clear reason before bulk deleting records.")
+        else:
+            try:
+                deleted_count = _bulk_delete_selected(
+                    info,
+                    selected_rows,
+                    reason,
+                    request.session.get(SESSION_USER_KEY, "internal_admin"),
+                )
+                messages.success(request, f"Bulk deleted {deleted_count} records and audited each deletion.")
+                return redirect("internal-data-admin-table", schema=schema, table=table)
+            except DatabaseError as exc:
+                messages.error(request, f"Bulk delete failed: {exc}")
+
+    return render(
+        request,
+        "dashboard/internal_data_admin/bulk_delete.html",
+        {
+            "table": info,
+            "selected_rows": selected_rows,
+            "selected_count": len(selected_rows),
+            "blocked_count": blocked_count,
+            "phrase": phrase,
+            "can_delete": blocked_count == 0,
+            "system_context": system_context,
+            "cleanup_note": _table_cleanup_note(info),
         },
     )

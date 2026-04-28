@@ -1,0 +1,75 @@
+{% extends "dashboard/internal_data_admin/base.html" %}
+
+{% block title %}Bulk Delete Review{% endblock %}
+{% block heading %}Bulk Delete Review{% endblock %}
+
+{% block content %}
+<nav class="ida-toolbar">
+  <a class="ida-button ida-button-secondary" href="{% url 'internal-data-admin-table' table.schema table.name %}">Back to Table</a>
+  <a class="ida-button ida-button-secondary" href="{{ system_context.home_href }}">Back to {{ system_context.profile.short_label }}</a>
+</nav>
+
+<section class="ida-panel ida-delete-panel">
+  <p class="ida-eyebrow">{{ system_context.profile.short_label }} / {{ system_context.layer }}</p>
+  <h2>{{ table.schema }}.{{ table.name }}</h2>
+  <p class="ida-muted">{{ cleanup_note }}</p>
+
+  <div class="ida-danger-box">
+    <strong>{{ selected_count }} records selected for bulk delete.</strong>
+    <span>Every selected record is locked, rechecked for dependencies, deleted inside one transaction, and audited separately.</span>
+  </div>
+
+  {% if blocked_count %}
+  <section class="ida-warning">
+    <strong>{{ blocked_count }} selected records are blocked by dependencies.</strong>
+    <span>Bulk delete is disabled until blocked records are removed from this batch or their dependent records are cleaned first.</span>
+  </section>
+  {% endif %}
+
+  <div class="ida-scroll">
+    <table class="ida-data-table">
+      <thead>
+        <tr>
+          <th>Record</th>
+          <th>Status</th>
+          <th>Dependency preview</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in selected_rows %}
+        <tr>
+          <td><code>{{ row.identity }}</code></td>
+          <td>{% if row.dependency_count %}<span class="ida-status ida-status-blocked">Blocked</span>{% else %}<span class="ida-status ida-status-ready">Ready</span>{% endif %}</td>
+          <td>
+            {% if row.dependencies %}
+              {% for dep in row.dependencies|slice:":4" %}
+              <div>{{ dep.kind }}: {{ dep.ref_schema }}.{{ dep.ref_table }}.{{ dep.ref_column }} = <code>{{ dep.value }}</code> ({{ dep.count }})</div>
+              {% endfor %}
+            {% else %}
+              No dependencies detected.
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <form class="ida-form ida-bulk-confirm" method="post" action="{% url 'internal-data-admin-bulk-delete' table.schema table.name %}">
+    {% csrf_token %}
+    <input type="hidden" name="bulk_action" value="delete">
+    {% for row in selected_rows %}
+    <input type="hidden" name="row_token" value="{{ row.token }}">
+    {% endfor %}
+    <label>
+      <span>Reason for bulk delete</span>
+      <input type="text" name="reason" placeholder="Example: clear dummy campaign rows after QA validation" required {% if not can_delete %}disabled{% endif %}>
+    </label>
+    <label>
+      <span>Type this exact phrase: <code>{{ phrase }}</code></span>
+      <input type="text" name="confirmation" autocomplete="off" required {% if not can_delete %}disabled{% endif %}>
+    </label>
+    <button class="ida-button ida-button-danger" type="submit" {% if not can_delete %}disabled{% endif %}>Delete {{ selected_count }} Selected Records</button>
+  </form>
+</section>
+{% endblock %}

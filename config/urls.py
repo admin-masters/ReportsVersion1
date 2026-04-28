@@ -2,6 +2,7 @@ from django.contrib import admin
 from django.urls import include, path
 from dashboard.views import campaign_overview, menu_page, campaign_login, export_report, etl_debug_page, send_access_email_view, campaign_access_page, reports_home, campaign_performance_links_page, campaign_performance_page
 from dashboard.internal_data_admin import (
+    internal_data_admin_bulk_delete,
     internal_data_admin_delete,
     internal_data_admin_edit,
     internal_data_admin_home,
@@ -31,6 +32,7 @@ urlpatterns = [
     path("_internal/data-admin/logout/", internal_data_admin_logout, name="internal-data-admin-logout"),
     path("_internal/data-admin/", internal_data_admin_home, name="internal-data-admin-home"),
     path("_internal/data-admin/<str:schema>/<str:table>/new/", internal_data_admin_new, name="internal-data-admin-new"),
+    path("_internal/data-admin/<str:schema>/<str:table>/bulk-delete/", internal_data_admin_bulk_delete, name="internal-data-admin-bulk-delete"),
     path("_internal/data-admin/<str:schema>/<str:table>/row/", internal_data_admin_row, name="internal-data-admin-row"),
     path("_internal/data-admin/<str:schema>/<str:table>/row/edit/", internal_data_admin_edit, name="internal-data-admin-edit"),
     path("_internal/data-admin/<str:schema>/<str:table>/row/delete/", internal_data_admin_delete, name="internal-data-admin-delete"),
