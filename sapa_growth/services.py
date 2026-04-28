@@ -401,11 +401,14 @@ def _derived_certified_rows(
             {
                 "serial_order": str(len(rows) + 1),
                 "doctor_key": doctor_key,
+                "campaign_key": doctor.get("campaign_key", ""),
+                "campaign_label": doctor.get("campaign_label", ""),
                 "doctor_display_name": doctor.get("doctor_display_name", ""),
                 "city": doctor.get("city", ""),
                 "district": doctor.get("district", ""),
                 "state": doctor.get("state", ""),
                 "field_rep_id": doctor.get("field_rep_id", ""),
+                "field_rep_name": doctor.get("field_rep_name", ""),
                 "certification_status": "enrolled",
                 "certification_date": enrolled.get(doctor_key, ""),
                 "certification_source": "doctor_course_enrollment",
@@ -896,7 +899,7 @@ def export_certified_csv(global_filters: dict[str, str | None], local_filters: d
     if not context["supported"]:
         raise Http404("Certified clinics are not configured")
     rows = context["rows"]
-    columns = ["serial_order", "doctor_display_name", "city", "state", "field_rep_id", "certification_status", "certification_date"]
+    columns = ["serial_order", "campaign_label", "doctor_display_name", "city", "state", "field_rep_id", "field_rep_name", "certification_status", "certification_date"]
     response = HttpResponse(content_type="text/csv")
     response["Content-Disposition"] = 'attachment; filename="sapa-growth-certified-clinics.csv"'
     writer = csv.writer(response)

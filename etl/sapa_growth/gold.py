@@ -182,6 +182,7 @@ def build_gold(run_id: str, source_status: str = "SUCCESS", stale_source_flags: 
                     "district": doctor.get("district"),
                     "state": doctor.get("state"),
                     "field_rep_id": doctor.get("field_rep_id"),
+                    "field_rep_name": doctor.get("field_rep_name"),
                     "screenings_last_15d": (status_row or {}).get("screenings_last_15d", "0"),
                     "active_flag": (status_row or {}).get("is_active", "false"),
                     "inactive_flag": (status_row or {}).get("is_inactive", "false"),
@@ -207,6 +208,7 @@ def build_gold(run_id: str, source_status: str = "SUCCESS", stale_source_flags: 
             "district",
             "state",
             "field_rep_id",
+            "field_rep_name",
             "screenings_last_15d",
             "active_flag",
             "inactive_flag",
@@ -239,6 +241,7 @@ def build_gold(run_id: str, source_status: str = "SUCCESS", stale_source_flags: 
             "district",
             "state",
             "field_rep_id",
+            "field_rep_name",
         ],
         [_stringify_row(_with_campaign_fields(row, doctor_campaigns)) for row in doctor_status_history_rows],
     )
@@ -261,6 +264,7 @@ def build_gold(run_id: str, source_status: str = "SUCCESS", stale_source_flags: 
         "district",
         "state",
         "field_rep_id",
+        "field_rep_name",
         "is_red_tag",
         "is_yellow_tag",
         "is_green_tag",
@@ -289,7 +293,10 @@ def build_gold(run_id: str, source_status: str = "SUCCESS", stale_source_flags: 
         "rpt_followup_schedule_detail",
         list(followup_rows[0].keys()) if followup_rows else [
             "reminder_id",
+            "source_reminder_id",
             "doctor_key",
+            "campaign_key",
+            "campaign_label",
             "patient_id",
             "patient_name",
             "patient_whatsapp",
@@ -308,6 +315,7 @@ def build_gold(run_id: str, source_status: str = "SUCCESS", stale_source_flags: 
             "district",
             "state",
             "field_rep_id",
+            "field_rep_name",
         ],
         [_stringify_row(_with_campaign_fields(row, doctor_campaigns)) for row in followup_rows],
     )
@@ -315,35 +323,35 @@ def build_gold(run_id: str, source_status: str = "SUCCESS", stale_source_flags: 
     replace_table(
         GOLD_STAGE_SCHEMA,
         "rpt_reminder_sent_detail",
-        list(reminder_rows[0].keys()) if reminder_rows else ["metric_event_id", "doctor_key", "patient_id", "ts", "action_key", "doctor_display_name", "city", "district", "state", "field_rep_id"],
+        list(reminder_rows[0].keys()) if reminder_rows else ["metric_event_id", "source_metric_event_id", "doctor_key", "campaign_key", "campaign_label", "patient_id", "ts", "action_key", "doctor_display_name", "city", "district", "state", "field_rep_id", "field_rep_name"],
         [_stringify_row(_with_campaign_fields(row, doctor_campaigns)) for row in reminder_rows],
     )
 
     replace_table(
         GOLD_STAGE_SCHEMA,
         "rpt_webinar_registration_detail",
-        list(webinar_rows[0].keys()) if webinar_rows else ["registration_key", "event_id", "event_title", "start_date", "end_date", "timezone", "email", "first_name", "last_name", "phone", "registration_effective_date", "doctor_key", "doctor_display_name", "state", "city", "field_rep_id", "match_method", "unmapped_flag"],
+        list(webinar_rows[0].keys()) if webinar_rows else ["registration_key", "source_registration_key", "event_id", "event_title", "start_date", "end_date", "timezone", "email", "first_name", "last_name", "phone", "registration_effective_date", "doctor_key", "campaign_key", "campaign_label", "doctor_display_name", "state", "city", "field_rep_id", "field_rep_name", "match_method", "unmapped_flag"],
         [_stringify_row(_with_campaign_fields(row, doctor_campaigns)) for row in webinar_rows],
     )
 
     replace_table(
         GOLD_STAGE_SCHEMA,
         "rpt_course_detail",
-        list(course_rows[0].keys()) if course_rows else ["extract_snapshot_date", "course_id", "course_audience", "user_id", "display_name", "user_email", "first_name", "last_name", "phone", "progress_status", "enrolled_at", "started_at", "completed_at", "dashboard_status", "doctor_key", "doctor_display_name", "state", "city", "field_rep_id", "match_method", "unmapped_flag"],
+        list(course_rows[0].keys()) if course_rows else ["extract_snapshot_date", "course_id", "course_audience", "user_id", "display_name", "user_email", "first_name", "last_name", "phone", "progress_status", "enrolled_at", "started_at", "completed_at", "dashboard_status", "doctor_key", "campaign_key", "campaign_label", "doctor_display_name", "state", "city", "field_rep_id", "field_rep_name", "match_method", "unmapped_flag"],
         [_stringify_row(_with_campaign_fields(row, doctor_campaigns)) for row in course_rows],
     )
 
     replace_table(
         GOLD_STAGE_SCHEMA,
         "rpt_submission_redflag_detail",
-        list(redflag_rows[0].keys()) if redflag_rows else ["source_row_id", "submission_key", "source_submission_id", "doctor_key", "red_flag", "submitted_at", "doctor_display_name", "city", "district", "state", "field_rep_id"],
+        list(redflag_rows[0].keys()) if redflag_rows else ["source_row_id", "submission_key", "source_submission_id", "doctor_key", "campaign_key", "campaign_label", "red_flag", "red_flag_name", "patient_video_url", "doctor_video_url", "submitted_at", "doctor_display_name", "city", "district", "state", "field_rep_id", "field_rep_name"],
         [_stringify_row(_with_campaign_fields(row, doctor_campaigns)) for row in redflag_rows],
     )
 
     replace_table(
         GOLD_STAGE_SCHEMA,
         "rpt_video_view_detail",
-        list(video_rows[0].keys()) if video_rows else ["metric_event_id", "doctor_key", "patient_id", "audience", "content_identifier", "video_url", "video_title", "preferred_display_label", "action_key", "event_type", "ts", "doctor_display_name", "city", "district", "state", "field_rep_id"],
+        list(video_rows[0].keys()) if video_rows else ["metric_event_id", "source_metric_event_id", "doctor_key", "campaign_key", "campaign_label", "patient_id", "audience", "content_identifier", "video_url", "video_title", "preferred_display_label", "action_key", "event_type", "ts", "doctor_display_name", "city", "district", "state", "field_rep_id", "field_rep_name"],
         [_stringify_row(_with_campaign_fields(row, doctor_campaigns)) for row in video_rows],
     )
 
@@ -408,11 +416,14 @@ def build_gold(run_id: str, source_status: str = "SUCCESS", stale_source_flags: 
                 {
                     "serial_order": len(certified_rows) + 1,
                     "doctor_key": doctor.get("doctor_key"),
+                    "campaign_key": doctor.get("campaign_key"),
+                    "campaign_label": doctor.get("campaign_label"),
                     "doctor_display_name": doctor.get("canonical_display_name"),
                     "city": doctor.get("city"),
                     "district": doctor.get("district"),
                     "state": doctor.get("state"),
                     "field_rep_id": doctor.get("field_rep_id"),
+                    "field_rep_name": doctor.get("field_rep_name"),
                     "certification_status": certification.get("certification_status", ""),
                     "certification_date": certification.get("certification_date", ""),
                     "certification_source": certification.get("certification_source", ""),
@@ -422,7 +433,7 @@ def build_gold(run_id: str, source_status: str = "SUCCESS", stale_source_flags: 
     replace_table(
         GOLD_STAGE_SCHEMA,
         "rpt_certified_clinics",
-        ["serial_order", "doctor_key", "doctor_display_name", "city", "district", "state", "field_rep_id", "certification_status", "certification_date", "certification_source"],
+        ["serial_order", "doctor_key", "campaign_key", "campaign_label", "doctor_display_name", "city", "district", "state", "field_rep_id", "field_rep_name", "certification_status", "certification_date", "certification_source"],
         certified_rows,
     )
 
@@ -442,7 +453,16 @@ def build_gold(run_id: str, source_status: str = "SUCCESS", stale_source_flags: 
         key=lambda item: (item[1], item[0]),
     )
     unique_states = sorted({clean_text(row.get("state")) or "" for row in doctor_rows})
-    unique_reps = sorted({clean_text(row.get("field_rep_id")) or "Unassigned" for row in doctor_rows})
+    unique_reps = sorted(
+        {
+            (
+                clean_text(row.get("field_rep_id")) or "Unassigned",
+                clean_text(row.get("field_rep_name")) or clean_text(row.get("field_rep_id")) or "Unassigned",
+            )
+            for row in doctor_rows
+        },
+        key=lambda item: (item[1].lower(), item[0].lower()),
+    )
     unique_doctors = sorted(doctor_rows, key=lambda row: (row.get("canonical_display_name") or "", row.get("doctor_key") or ""))
     unique_cities = sorted({clean_text(row.get("city")) or "" for row in doctor_rows})
 
@@ -450,8 +470,9 @@ def build_gold(run_id: str, source_status: str = "SUCCESS", stale_source_flags: 
         filter_campaign_rows.append(_stringify_row({"display_label": campaign_label or campaign_key or "Unknown", "underlying_key": campaign_key, "sort_order": index, "active_flag": "true", "unknown_flag": "true" if not campaign_key else "false"}))
     for index, value in enumerate(unique_states, start=1):
         filter_state_rows.append(_stringify_row({"display_label": value or "Unknown", "underlying_key": value, "sort_order": index, "active_flag": "true", "unknown_flag": "true" if not value else "false"}))
-    for index, value in enumerate(unique_reps, start=1):
-        filter_field_rep_rows.append(_stringify_row({"display_label": value or "Unassigned", "underlying_key": value, "sort_order": index, "active_flag": "true", "unknown_flag": "true" if not value else "false"}))
+    for index, (value, label) in enumerate(unique_reps, start=1):
+        display_label = label if label == value else f"{label} ({value})"
+        filter_field_rep_rows.append(_stringify_row({"display_label": display_label or "Unassigned", "underlying_key": value, "sort_order": index, "active_flag": "true", "unknown_flag": "true" if not value else "false"}))
     for index, row in enumerate(unique_doctors, start=1):
         filter_doctor_rows.append(_stringify_row({"display_label": row.get("canonical_display_name"), "underlying_key": row.get("doctor_key"), "sort_order": index, "active_flag": "true", "unknown_flag": "false"}))
     for index, value in enumerate(unique_cities, start=1):

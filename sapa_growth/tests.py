@@ -194,10 +194,11 @@ class SapaGrowthLogicTests(SimpleTestCase):
 
 class SapaGrowthRoutingTests(SimpleTestCase):
     def test_dashboard_route_registered(self):
-        self.assertEqual(reverse("sapa_growth:dashboard"), "/sapa-growth/")
-        self.assertEqual(resolve("/sapa-growth/").view_name, "sapa_growth:dashboard")
+        self.assertEqual(reverse("sapa_growth:menu"), "/sapa-growth/")
+        self.assertEqual(reverse("sapa_growth:dashboard"), "/sapa-growth/dashboard/")
+        self.assertEqual(resolve("/sapa-growth/").view_name, "sapa_growth:menu")
         self.assertEqual(resolve("/sapa-growth/campaign/growth-clinic/").view_name, "sapa_growth:campaign-dashboard")
-        self.assertEqual(resolve("/sapa-growth/menu/").view_name, "sapa_growth:menu")
+        self.assertEqual(resolve("/sapa-growth/menu/").view_name, "sapa_growth:menu-legacy")
         self.assertEqual(resolve("/sapa-growth/login/").view_name, "sapa_growth:login")
         self.assertEqual(resolve("/sapa-growth/campaign/growth-clinic/login/").view_name, "sapa_growth:campaign-login")
         self.assertEqual(resolve("/sapa-growth/access/").view_name, "sapa_growth:access")
@@ -210,12 +211,12 @@ class SapaGrowthAccessViewTests(SimpleTestCase):
             "sapa_growth.views.campaign_options",
             return_value=[{"underlying_key": "growth-clinic", "display_label": "SAPA Growth Clinic Program"}],
         ):
-            response = self.client.get("/sapa-growth/menu/")
+            response = self.client.get("/sapa-growth/")
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, "SAPA Growth Clinic Program")
 
     def test_dashboard_redirects_to_login_when_unauthenticated(self):
-        response = self.client.get("/sapa-growth/")
+        response = self.client.get("/sapa-growth/dashboard/")
         self.assertEqual(response.status_code, 302)
         self.assertEqual(response["Location"], "/sapa-growth/login/")
 

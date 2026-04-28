@@ -36,31 +36,31 @@ def _empty_text(value: Any, fallback: str = "") -> str:
     return clean_text(value) or fallback
 
 
-def _doctor_indexes(dim_rows: list[dict[str, Any]]) -> tuple[dict[str, dict[str, Any]], dict[str, dict[str, Any]], dict[str, dict[str, Any]]]:
-    by_doctor_id: dict[str, dict[str, Any]] = {}
-    by_email: dict[str, dict[str, Any]] = {}
-    by_phone: dict[str, dict[str, Any]] = {}
+def _doctor_indexes(dim_rows: list[dict[str, Any]]) -> tuple[dict[str, list[dict[str, Any]]], dict[str, list[dict[str, Any]]], dict[str, list[dict[str, Any]]]]:
+    by_doctor_id: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    by_email: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    by_phone: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for row in dim_rows:
         doctor_id = clean_text(row.get("source_doctor_id"))
         email = clean_text(row.get("canonical_email"))
         phone = normalize_phone(row.get("canonical_phone") or row.get("canonical_whatsapp_no"))
         if doctor_id:
-            by_doctor_id[doctor_id] = row
-        if email and email.lower() not in by_email:
-            by_email[email.lower()] = row
-        if phone and phone not in by_phone:
-            by_phone[phone] = row
+            by_doctor_id[doctor_id].append(row)
+        if email:
+            by_email[email.lower()].append(row)
+        if phone:
+            by_phone[phone].append(row)
     return by_doctor_id, by_email, by_phone
 
 
-def _doctor_match_for_api(row: dict[str, Any], by_email: dict[str, dict[str, Any]], by_phone: dict[str, dict[str, Any]]) -> tuple[dict[str, Any] | None, str]:
+def _doctor_matches_for_api(row: dict[str, Any], by_email: dict[str, list[dict[str, Any]]], by_phone: dict[str, list[dict[str, Any]]]) -> list[tuple[dict[str, Any] | None, str]]:
     email = clean_text(row.get("email") or row.get("user_email"))
     if email and email.lower() in by_email:
-        return by_email[email.lower()], "email"
+        return [(item, "email") for item in by_email[email.lower()]]
     phone = normalize_phone(row.get("phone"))
     if phone and phone in by_phone:
-        return by_phone[phone], "phone"
-    return None, "unmapped"
+        return [(item, "phone") for item in by_phone[phone]]
+    return [(None, "unmapped")]
 
 
 def _doctor_filters(dim_row: dict[str, Any] | None) -> dict[str, str]:
@@ -71,6 +71,7 @@ def _doctor_filters(dim_row: dict[str, Any] | None) -> dict[str, str]:
             "district": "",
             "state": "",
             "field_rep_id": "Unassigned",
+            "field_rep_name": "Unassigned",
             "campaign_key": "",
             "campaign_label": "",
         }
@@ -80,6 +81,7 @@ def _doctor_filters(dim_row: dict[str, Any] | None) -> dict[str, str]:
         "district": _empty_text(dim_row.get("district")),
         "state": _empty_text(dim_row.get("state")),
         "field_rep_id": _empty_text(dim_row.get("field_rep_id"), "Unassigned"),
+        "field_rep_name": _empty_text(dim_row.get("field_rep_name"), _empty_text(dim_row.get("field_rep_id"), "Unassigned")),
         "campaign_key": _empty_text(dim_row.get("campaign_key")),
         "campaign_label": _empty_text(dim_row.get("campaign_label")),
     }
@@ -114,10 +116,30 @@ def _campaign_key_label(*rows: dict[str, Any] | None) -> tuple[str, str]:
     return key, label
 
 
+def _truthy(value: Any) -> bool:
+    return (clean_text(value) or "").lower() in {"1", "true", "t", "yes", "y", "on"}
+
+
+def _norm_id(value: Any) -> str:
+    raw = clean_text(value) or ""
+    return "".join(ch.lower() for ch in raw if ch.isalnum())
+
+
+def _campaign_specific_doctor_key(base_key: str, campaign_key: str) -> str:
+    if not campaign_key:
+        return base_key
+    return f"{base_key}::campaign:{campaign_key}"
+
+
 def build_silver(run_id: str) -> dict[str, Any]:
     now_iso = _now_iso()
 
     campaign_doctors = fetch_table(BRONZE_SCHEMA, "campaign_doctor")
+    campaign_enrollments = fetch_table(BRONZE_SCHEMA, "campaign_doctorcampaignenrollment")
+    campaign_rows = fetch_table(BRONZE_SCHEMA, "campaign_campaign")
+    brand_rows = fetch_table(BRONZE_SCHEMA, "campaign_brand")
+    source_field_rep_rows = fetch_table(BRONZE_SCHEMA, "campaign_fieldrep")
+    campaign_field_rep_rows = fetch_table(BRONZE_SCHEMA, "campaign_campaignfieldrep")
     redflag_doctors = fetch_table(BRONZE_SCHEMA, "redflags_doctor")
     redflag_submissions = fetch_table(BRONZE_SCHEMA, "redflags_patientsubmission")
     gnd_submissions = fetch_table(BRONZE_SCHEMA, "gnd_gndpatientsubmission")
@@ -136,6 +158,120 @@ def build_silver(run_id: str) -> dict[str, Any]:
 
     redflag_doctor_by_id = {clean_text(row.get("doctor_id")): row for row in redflag_doctors if clean_text(row.get("doctor_id"))}
     clinic_outcome_by_doctor = {clean_text(row.get("doctor_id")): row for row in clinic_outcomes if clean_text(row.get("doctor_id"))}
+    campaign_doctor_by_row_id = {clean_text(row.get("id")): row for row in campaign_doctors if clean_text(row.get("id"))}
+    brand_by_id = {clean_text(row.get("id")): row for row in brand_rows if clean_text(row.get("id"))}
+    has_rfa_flag_values = any(clean_text(row.get("system_rfa")) is not None for row in campaign_rows)
+    rfa_campaigns = {
+        clean_text(row.get("id")): row
+        for row in campaign_rows
+        if clean_text(row.get("id")) and (not has_rfa_flag_values or _truthy(row.get("system_rfa")))
+    }
+    field_rep_by_id = {clean_text(row.get("id")): row for row in source_field_rep_rows if clean_text(row.get("id"))}
+    field_rep_by_external = {
+        _norm_id(row.get("brand_supplied_field_rep_id")): row
+        for row in source_field_rep_rows
+        if _norm_id(row.get("brand_supplied_field_rep_id"))
+    }
+    campaign_rep_ids: dict[str, set[str]] = defaultdict(set)
+    rep_campaign_ids: dict[str, set[str]] = defaultdict(set)
+    for row in campaign_field_rep_rows:
+        campaign_id = clean_text(row.get("campaign_id"))
+        field_rep_id = clean_text(row.get("field_rep_id"))
+        if not campaign_id or not field_rep_id:
+            continue
+        campaign_rep_ids[campaign_id].add(field_rep_id)
+        rep_campaign_ids[field_rep_id].add(campaign_id)
+
+    def campaign_meta(campaign_id: Any) -> tuple[str, str]:
+        campaign = rfa_campaigns.get(clean_text(campaign_id)) or {}
+        brand = brand_by_id.get(clean_text(campaign.get("brand_id"))) or {}
+        key = clean_text(campaign.get("id"))
+        label = clean_text(campaign.get("name")) or clean_text(brand.get("name"))
+        return _campaign_key_label({"campaign_id": key, "campaign_name": label})
+
+    def resolve_field_rep(field_rep_value: Any, campaign_id: Any = None) -> dict[str, str]:
+        raw = clean_text(field_rep_value)
+        rep = field_rep_by_id.get(raw or "") or field_rep_by_external.get(_norm_id(raw))
+        campaign_rep_set = campaign_rep_ids.get(clean_text(campaign_id) or "", set())
+        if not rep and campaign_rep_set:
+            first_rep_id = sorted(campaign_rep_set)[0]
+            rep = field_rep_by_id.get(first_rep_id)
+        display_id = clean_text((rep or {}).get("brand_supplied_field_rep_id")) or clean_text((rep or {}).get("id")) or raw or "Unassigned"
+        return {
+            "field_rep_id": display_id,
+            "field_rep_name": clean_text((rep or {}).get("full_name")) or display_id,
+            "field_rep_state": clean_text((rep or {}).get("state")) or "",
+        }
+
+    enrollments_by_campaign_doctor_id: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for row in campaign_enrollments:
+        campaign_id = clean_text(row.get("campaign_id"))
+        campaign_doctor_id = clean_text(row.get("doctor_id"))
+        if not campaign_id or campaign_id not in rfa_campaigns or not campaign_doctor_id:
+            continue
+        enrollments_by_campaign_doctor_id[campaign_doctor_id].append(row)
+
+    def enrollment_campaigns_for_doctor(campaign_row: dict[str, Any], doctor_row: dict[str, Any] | None = None) -> list[dict[str, Any]]:
+        row_id = clean_text(campaign_row.get("id"))
+        enrollments = enrollments_by_campaign_doctor_id.get(row_id or "", [])
+        output = []
+        for enrollment in enrollments:
+            campaign_id = clean_text(enrollment.get("campaign_id"))
+            if not campaign_id:
+                continue
+            campaign_key, campaign_label = campaign_meta(campaign_id)
+            rep_info = resolve_field_rep(enrollment.get("registered_by_id") or (doctor_row or {}).get("field_rep_id"), campaign_id)
+            output.append(
+                {
+                    "campaign_id": campaign_id,
+                    "campaign_key": campaign_key,
+                    "campaign_label": campaign_label,
+                    "field_rep_id": rep_info["field_rep_id"],
+                    "field_rep_name": rep_info["field_rep_name"],
+                    "field_rep_state": rep_info["field_rep_state"],
+                    "registered_at": clean_text(enrollment.get("registered_at") or enrollment.get("created_at")) or "",
+                }
+            )
+        if output:
+            return output
+        campaign_key, campaign_label = _campaign_key_label(campaign_row, doctor_row)
+        rep_info = resolve_field_rep((doctor_row or {}).get("field_rep_id"))
+        return [
+            {
+                "campaign_id": "",
+                "campaign_key": campaign_key,
+                "campaign_label": campaign_label,
+                "field_rep_id": rep_info["field_rep_id"],
+                "field_rep_name": rep_info["field_rep_name"],
+                "field_rep_state": rep_info["field_rep_state"],
+                "registered_at": "",
+            }
+        ]
+
+    def campaigns_for_redflags_doctor(doctor_row: dict[str, Any]) -> list[dict[str, Any]]:
+        rep = field_rep_by_id.get(clean_text(doctor_row.get("field_rep_id")) or "") or field_rep_by_external.get(_norm_id(doctor_row.get("field_rep_id")))
+        campaign_ids = sorted(rep_campaign_ids.get(clean_text((rep or {}).get("id")) or "", set()) & set(rfa_campaigns.keys()))
+        output = []
+        for campaign_id in campaign_ids:
+            campaign_key, campaign_label = campaign_meta(campaign_id)
+            rep_info = resolve_field_rep((rep or {}).get("id") or doctor_row.get("field_rep_id"), campaign_id)
+            output.append(
+                {
+                    "campaign_id": campaign_id,
+                    "campaign_key": campaign_key,
+                    "campaign_label": campaign_label,
+                    "field_rep_id": rep_info["field_rep_id"],
+                    "field_rep_name": rep_info["field_rep_name"],
+                    "field_rep_state": rep_info["field_rep_state"],
+                    "registered_at": "",
+                }
+            )
+        if output:
+            return output
+        campaign_key, campaign_label = _campaign_key_label(doctor_row)
+        rep_info = resolve_field_rep(doctor_row.get("field_rep_id"))
+        return [{"campaign_id": "", "campaign_key": campaign_key, "campaign_label": campaign_label, "field_rep_id": rep_info["field_rep_id"], "field_rep_name": rep_info["field_rep_name"], "field_rep_state": rep_info["field_rep_state"], "registered_at": ""}]
+
     dim_rows: list[dict[str, Any]] = []
     included_doctor_ids: set[str] = set()
 
@@ -143,42 +279,46 @@ def build_silver(run_id: str) -> dict[str, Any]:
         doctor_id = clean_text(campaign_row.get("doctor_id"))
         doctor_row = redflag_doctor_by_id.get(doctor_id)
         clinic_outcome_row = clinic_outcome_by_doctor.get(doctor_id)
-        doctor_key = canonical_doctor_key(doctor_id, campaign_row.get("id"))
+        base_doctor_key = canonical_doctor_key(doctor_id, campaign_row.get("id"))
         first_name, last_name = split_full_name(campaign_row.get("full_name"))
-        campaign_key, campaign_label = _campaign_key_label(campaign_row, clinic_outcome_row, doctor_row)
         if doctor_row:
             first_name = clean_text(doctor_row.get("first_name")) or first_name
             last_name = clean_text(doctor_row.get("last_name")) or last_name
-        dim_rows.append(
-            {
-                "doctor_key": doctor_key,
-                "source_doctor_id": doctor_id or "",
-                "campaign_doctor_row_id": _empty_text(campaign_row.get("id")),
-                "campaign_key": campaign_key,
-                "campaign_label": campaign_label,
-                "canonical_display_name": display_name_from_sources(campaign_row, doctor_row),
-                "first_name": first_name or "",
-                "last_name": last_name or "",
-                "canonical_email": _empty_text(campaign_row.get("email") or (doctor_row or {}).get("email")),
-                "canonical_phone": _empty_text(campaign_row.get("phone") or (doctor_row or {}).get("clinic_phone")),
-                "canonical_whatsapp_no": _empty_text((doctor_row or {}).get("whatsapp_no")),
-                "clinic_name": _empty_text((doctor_row or {}).get("clinic_name")),
-                "city": _empty_text(campaign_row.get("city")),
-                "district": _empty_text((doctor_row or {}).get("district")),
-                "state": _empty_text(campaign_row.get("state") or (doctor_row or {}).get("state")),
-                "field_rep_id": _empty_text((doctor_row or {}).get("field_rep_id"), "Unassigned"),
-                "recruited_via": _empty_text((doctor_row or {}).get("recruited_via")),
-                "first_seen_at": _empty_text(min(filter(None, [iso_datetime(campaign_row.get("created_at")), iso_datetime((doctor_row or {}).get("created_at"))]), default="")),
-                "latest_seen_at": _empty_text(max(filter(None, [iso_datetime(campaign_row.get("created_at")), iso_datetime((doctor_row or {}).get("created_at"))]), default="")),
-                "is_user_created_doctor": "true",
-                "has_campaign_source": "true",
-                "has_redflags_source": "true" if doctor_row else "false",
-                "identity_quality_status": "logical_doctor_id" if doctor_id else "campaign_row_only",
-                "_silver_updated_at": now_iso,
-                "_dq_status": "PASS",
-                "_dq_errors": "",
-            }
-        )
+        for campaign_info in enrollment_campaigns_for_doctor(campaign_row, doctor_row):
+            campaign_key = campaign_info["campaign_key"]
+            dim_rows.append(
+                {
+                    "doctor_key": _campaign_specific_doctor_key(base_doctor_key, campaign_key),
+                    "source_doctor_id": doctor_id or "",
+                    "base_doctor_key": base_doctor_key,
+                    "campaign_doctor_row_id": _empty_text(campaign_row.get("id")),
+                    "campaign_id": campaign_info["campaign_id"],
+                    "campaign_key": campaign_key,
+                    "campaign_label": campaign_info["campaign_label"],
+                    "canonical_display_name": display_name_from_sources(campaign_row, doctor_row),
+                    "first_name": first_name or "",
+                    "last_name": last_name or "",
+                    "canonical_email": _empty_text(campaign_row.get("email") or (doctor_row or {}).get("email")),
+                    "canonical_phone": _empty_text(campaign_row.get("phone") or (doctor_row or {}).get("clinic_phone")),
+                    "canonical_whatsapp_no": _empty_text((doctor_row or {}).get("whatsapp_no")),
+                    "clinic_name": _empty_text((doctor_row or {}).get("clinic_name")),
+                    "city": _empty_text(campaign_row.get("city")),
+                    "district": _empty_text((doctor_row or {}).get("district")),
+                    "state": _empty_text(campaign_row.get("state") or campaign_info["field_rep_state"] or (doctor_row or {}).get("state")),
+                    "field_rep_id": campaign_info["field_rep_id"],
+                    "field_rep_name": campaign_info["field_rep_name"],
+                    "recruited_via": _empty_text((doctor_row or {}).get("recruited_via")),
+                    "first_seen_at": _empty_text(min(filter(None, [iso_datetime(campaign_info.get("registered_at")), iso_datetime(campaign_row.get("created_at")), iso_datetime((doctor_row or {}).get("created_at"))]), default="")),
+                    "latest_seen_at": _empty_text(max(filter(None, [iso_datetime(campaign_info.get("registered_at")), iso_datetime(campaign_row.get("created_at")), iso_datetime((doctor_row or {}).get("created_at"))]), default="")),
+                    "is_user_created_doctor": "true",
+                    "has_campaign_source": "true",
+                    "has_redflags_source": "true" if doctor_row else "false",
+                    "identity_quality_status": "logical_doctor_id" if doctor_id else "campaign_row_only",
+                    "_silver_updated_at": now_iso,
+                    "_dq_status": "PASS",
+                    "_dq_errors": "",
+                }
+            )
         if doctor_id:
             included_doctor_ids.add(doctor_id)
 
@@ -187,42 +327,48 @@ def build_silver(run_id: str) -> dict[str, Any]:
         if doctor_id in included_doctor_ids:
             continue
         clinic_outcome_row = clinic_outcome_by_doctor.get(doctor_id)
-        campaign_key, campaign_label = _campaign_key_label(doctor_row, clinic_outcome_row)
-        dim_rows.append(
-            {
-                "doctor_key": canonical_doctor_key(doctor_id, None),
-                "source_doctor_id": doctor_id or "",
-                "campaign_doctor_row_id": "",
-                "campaign_key": campaign_key,
-                "campaign_label": campaign_label,
-                "canonical_display_name": display_name_from_sources(None, doctor_row),
-                "first_name": _empty_text(doctor_row.get("first_name")),
-                "last_name": _empty_text(doctor_row.get("last_name")),
-                "canonical_email": _empty_text(doctor_row.get("email")),
-                "canonical_phone": _empty_text(doctor_row.get("clinic_phone")),
-                "canonical_whatsapp_no": _empty_text(doctor_row.get("whatsapp_no")),
-                "clinic_name": _empty_text(doctor_row.get("clinic_name")),
-                "city": "",
-                "district": _empty_text(doctor_row.get("district")),
-                "state": _empty_text(doctor_row.get("state")),
-                "field_rep_id": _empty_text(doctor_row.get("field_rep_id"), "Unassigned"),
-                "recruited_via": _empty_text(doctor_row.get("recruited_via")),
-                "first_seen_at": _empty_text(iso_datetime(doctor_row.get("created_at"))),
-                "latest_seen_at": _empty_text(iso_datetime(doctor_row.get("created_at"))),
-                "is_user_created_doctor": "false",
-                "has_campaign_source": "false",
-                "has_redflags_source": "true",
-                "identity_quality_status": "logical_doctor_id" if doctor_id else "redflags_missing_doctor_id",
-                "_silver_updated_at": now_iso,
-                "_dq_status": "FAIL" if not doctor_id else "PASS",
-                "_dq_errors": "Missing doctor_id in redflags_doctor" if not doctor_id else "",
-            }
-        )
+        base_doctor_key = canonical_doctor_key(doctor_id, None)
+        for campaign_info in campaigns_for_redflags_doctor(doctor_row):
+            dim_rows.append(
+                {
+                    "doctor_key": _campaign_specific_doctor_key(base_doctor_key, campaign_info["campaign_key"]),
+                    "source_doctor_id": doctor_id or "",
+                    "base_doctor_key": base_doctor_key,
+                    "campaign_doctor_row_id": "",
+                    "campaign_id": campaign_info["campaign_id"],
+                    "campaign_key": campaign_info["campaign_key"],
+                    "campaign_label": campaign_info["campaign_label"],
+                    "canonical_display_name": display_name_from_sources(None, doctor_row),
+                    "first_name": _empty_text(doctor_row.get("first_name")),
+                    "last_name": _empty_text(doctor_row.get("last_name")),
+                    "canonical_email": _empty_text(doctor_row.get("email")),
+                    "canonical_phone": _empty_text(doctor_row.get("clinic_phone")),
+                    "canonical_whatsapp_no": _empty_text(doctor_row.get("whatsapp_no")),
+                    "clinic_name": _empty_text(doctor_row.get("clinic_name")),
+                    "city": "",
+                    "district": _empty_text(doctor_row.get("district")),
+                    "state": _empty_text(campaign_info["field_rep_state"] or doctor_row.get("state")),
+                    "field_rep_id": campaign_info["field_rep_id"],
+                    "field_rep_name": campaign_info["field_rep_name"],
+                    "recruited_via": _empty_text(doctor_row.get("recruited_via")),
+                    "first_seen_at": _empty_text(iso_datetime(doctor_row.get("created_at"))),
+                    "latest_seen_at": _empty_text(iso_datetime(doctor_row.get("created_at"))),
+                    "is_user_created_doctor": "false",
+                    "has_campaign_source": "false",
+                    "has_redflags_source": "true",
+                    "identity_quality_status": "logical_doctor_id" if doctor_id else "redflags_missing_doctor_id",
+                    "_silver_updated_at": now_iso,
+                    "_dq_status": "FAIL" if not doctor_id else "PASS",
+                    "_dq_errors": "Missing doctor_id in redflags_doctor" if not doctor_id else "",
+                }
+            )
 
     dim_columns = [
         "doctor_key",
         "source_doctor_id",
+        "base_doctor_key",
         "campaign_doctor_row_id",
+        "campaign_id",
         "campaign_key",
         "campaign_label",
         "canonical_display_name",
@@ -236,6 +382,7 @@ def build_silver(run_id: str) -> dict[str, Any]:
         "district",
         "state",
         "field_rep_id",
+        "field_rep_name",
         "recruited_via",
         "first_seen_at",
         "latest_seen_at",
@@ -252,9 +399,13 @@ def build_silver(run_id: str) -> dict[str, Any]:
     field_rep_rows = []
     for field_rep_id in sorted({row.get("field_rep_id") or "Unassigned" for row in dim_rows}):
         related = [row for row in dim_rows if (row.get("field_rep_id") or "Unassigned") == field_rep_id]
+        field_rep_name = next((row.get("field_rep_name") for row in related if row.get("field_rep_name")), field_rep_id)
+        state = next((row.get("state") for row in related if row.get("state")), "")
         field_rep_rows.append(
             {
                 "field_rep_id": field_rep_id,
+                "field_rep_name": field_rep_name,
+                "state": state,
                 "is_unassigned": "true" if field_rep_id == "Unassigned" else "false",
                 "first_seen_at": min((row.get("first_seen_at") or now_iso for row in related), default=now_iso),
                 "last_seen_at": max((row.get("latest_seen_at") or now_iso for row in related), default=now_iso),
@@ -263,7 +414,7 @@ def build_silver(run_id: str) -> dict[str, Any]:
     replace_table(
         SILVER_SCHEMA,
         "dim_field_rep",
-        ["field_rep_id", "is_unassigned", "first_seen_at", "last_seen_at"],
+        ["field_rep_id", "field_rep_name", "state", "is_unassigned", "first_seen_at", "last_seen_at"],
         field_rep_rows,
     )
 
@@ -318,46 +469,52 @@ def build_silver(run_id: str) -> dict[str, Any]:
         patient_video_by_flag_and_language.setdefault((red_flag_id, language_code), patient_video_url)
         patient_video_by_flag.setdefault(red_flag_id, patient_video_url)
 
-    def resolve_doctor_key_from_source_id(source_doctor_id: Any, source_hint: str) -> tuple[str, dict[str, Any] | None]:
+    def resolve_doctor_matches_from_source_id(source_doctor_id: Any, source_hint: str) -> list[tuple[str, dict[str, Any] | None]]:
         doctor_id = clean_text(source_doctor_id)
-        dim_row = dim_by_doctor_id.get(doctor_id)
-        if dim_row:
-            return dim_row["doctor_key"], dim_row
+        dim_matches = dim_by_doctor_id.get(doctor_id) or []
+        if dim_matches:
+            return [(row["doctor_key"], row) for row in dim_matches]
         if doctor_id:
-            return f"unmatched:{doctor_id}", None
-        return f"unmatched:{source_hint}", None
+            return [(f"unmatched:{doctor_id}", None)]
+        return [(f"unmatched:{source_hint}", None)]
 
     screening_rows = []
-    screening_source_index: dict[tuple[str, str], dict[str, Any]] = {}
+    screening_source_index: dict[tuple[str, str], list[dict[str, Any]]] = defaultdict(list)
     for source_table, source_rows in (("redflags_patientsubmission", redflag_submissions), ("gnd_gndpatientsubmission", gnd_submissions)):
         for row in source_rows:
             source_submission_id = clean_text(row.get("record_id") or row.get("id")) or hash_fields(source_table, row)
-            doctor_key, doctor_dim = resolve_doctor_key_from_source_id(row.get("doctor_id"), f"{source_table}:{source_submission_id}")
-            filters = _doctor_filters(doctor_dim)
-            overall_flag = (_empty_text(row.get("overall_flag_code"))).lower()
-            submitted_at = iso_datetime(row.get("submitted_at"))
-            screening_row = {
-                "submission_key": f"{source_table}:{source_submission_id}",
-                "source_table": source_table,
-                "source_submission_id": source_submission_id,
-                "doctor_key": doctor_key,
-                "patient_id": _empty_text(row.get("patient_id")),
-                "form_identifier": _empty_text(row.get("form_id") or row.get("form")),
-                "language_code": _empty_text(row.get("language_code")),
-                "submitted_at": submitted_at or "",
-                "overall_flag_code": overall_flag,
-                "doctor_display_name": filters["doctor_display_name"],
-                "city": filters["city"],
-                "district": filters["district"],
-                "state": filters["state"],
-                "field_rep_id": filters["field_rep_id"],
-                "is_red_tag": "true" if overall_flag == "red" else "false",
-                "is_yellow_tag": "true" if overall_flag == "yellow" else "false",
-                "is_green_tag": "true" if overall_flag == "green" else "false",
-                "unresolved_doctor_flag": "true" if doctor_dim is None else "false",
-            }
-            screening_rows.append(screening_row)
-            screening_source_index[(source_table, source_submission_id)] = screening_row
+            for doctor_key, doctor_dim in resolve_doctor_matches_from_source_id(row.get("doctor_id"), f"{source_table}:{source_submission_id}"):
+                filters = _doctor_filters(doctor_dim)
+                overall_flag = (_empty_text(row.get("overall_flag_code"))).lower()
+                submitted_at = iso_datetime(row.get("submitted_at"))
+                submission_key = f"{source_table}:{source_submission_id}"
+                if filters["campaign_key"]:
+                    submission_key = f"{submission_key}:campaign:{filters['campaign_key']}"
+                screening_row = {
+                    "submission_key": submission_key,
+                    "source_table": source_table,
+                    "source_submission_id": source_submission_id,
+                    "doctor_key": doctor_key,
+                    "campaign_key": filters["campaign_key"],
+                    "campaign_label": filters["campaign_label"],
+                    "patient_id": _empty_text(row.get("patient_id")),
+                    "form_identifier": _empty_text(row.get("form_id") or row.get("form")),
+                    "language_code": _empty_text(row.get("language_code")),
+                    "submitted_at": submitted_at or "",
+                    "overall_flag_code": overall_flag,
+                    "doctor_display_name": filters["doctor_display_name"],
+                    "city": filters["city"],
+                    "district": filters["district"],
+                    "state": filters["state"],
+                    "field_rep_id": filters["field_rep_id"],
+                    "field_rep_name": filters["field_rep_name"],
+                    "is_red_tag": "true" if overall_flag == "red" else "false",
+                    "is_yellow_tag": "true" if overall_flag == "yellow" else "false",
+                    "is_green_tag": "true" if overall_flag == "green" else "false",
+                    "unresolved_doctor_flag": "true" if doctor_dim is None else "false",
+                }
+                screening_rows.append(screening_row)
+                screening_source_index[(source_table, source_submission_id)].append(screening_row)
     replace_table(
         SILVER_SCHEMA,
         "fact_screening_submission",
@@ -366,6 +523,8 @@ def build_silver(run_id: str) -> dict[str, Any]:
             "source_table",
             "source_submission_id",
             "doctor_key",
+            "campaign_key",
+            "campaign_label",
             "patient_id",
             "form_identifier",
             "language_code",
@@ -376,6 +535,7 @@ def build_silver(run_id: str) -> dict[str, Any]:
             "district",
             "state",
             "field_rep_id",
+            "field_rep_name",
             "is_red_tag",
             "is_yellow_tag",
             "is_green_tag",
@@ -393,31 +553,35 @@ def build_silver(run_id: str) -> dict[str, Any]:
             source_submission_id = clean_text(row.get("submission_id") or row.get("submission"))
             if not source_submission_id:
                 continue
-            submission = screening_source_index.get((submission_table, source_submission_id))
-            if not submission:
+            submissions = screening_source_index.get((submission_table, source_submission_id), [])
+            if not submissions:
                 continue
-            redflag_fact_rows.append(
-                {
-                    "source_row_id": _empty_text(row.get("id")),
-                    "submission_key": submission["submission_key"],
-                    "source_submission_id": source_submission_id,
-                    "doctor_key": submission["doctor_key"],
-                    "red_flag": _empty_text(row.get("red_flag_id") or row.get("red_flag")),
-                    "red_flag_name": _empty_text((red_flag_catalog.get(_empty_text(row.get("red_flag_id") or row.get("red_flag"))) or {}).get("red_flag_name")),
-                    "patient_video_url": _empty_text(
-                        patient_video_by_flag.get(_empty_text(row.get("red_flag_id") or row.get("red_flag")))
-                    ),
-                    "doctor_video_url": _empty_text(
-                        (red_flag_catalog.get(_empty_text(row.get("red_flag_id") or row.get("red_flag"))) or {}).get("doctor_video_url")
-                    ),
-                    "submitted_at": submission["submitted_at"],
-                    "doctor_display_name": submission["doctor_display_name"],
-                    "city": submission["city"],
-                    "district": submission["district"],
-                    "state": submission["state"],
-                    "field_rep_id": submission["field_rep_id"],
-                }
-            )
+            for submission in submissions:
+                redflag_fact_rows.append(
+                    {
+                        "source_row_id": _empty_text(row.get("id")),
+                        "submission_key": submission["submission_key"],
+                        "source_submission_id": source_submission_id,
+                        "doctor_key": submission["doctor_key"],
+                        "campaign_key": submission["campaign_key"],
+                        "campaign_label": submission["campaign_label"],
+                        "red_flag": _empty_text(row.get("red_flag_id") or row.get("red_flag")),
+                        "red_flag_name": _empty_text((red_flag_catalog.get(_empty_text(row.get("red_flag_id") or row.get("red_flag"))) or {}).get("red_flag_name")),
+                        "patient_video_url": _empty_text(
+                            patient_video_by_flag.get(_empty_text(row.get("red_flag_id") or row.get("red_flag")))
+                        ),
+                        "doctor_video_url": _empty_text(
+                            (red_flag_catalog.get(_empty_text(row.get("red_flag_id") or row.get("red_flag"))) or {}).get("doctor_video_url")
+                        ),
+                        "submitted_at": submission["submitted_at"],
+                        "doctor_display_name": submission["doctor_display_name"],
+                        "city": submission["city"],
+                        "district": submission["district"],
+                        "state": submission["state"],
+                        "field_rep_id": submission["field_rep_id"],
+                        "field_rep_name": submission["field_rep_name"],
+                    }
+                )
     replace_table(
         SILVER_SCHEMA,
         "fact_submission_redflag",
@@ -426,6 +590,8 @@ def build_silver(run_id: str) -> dict[str, Any]:
             "submission_key",
             "source_submission_id",
             "doctor_key",
+            "campaign_key",
+            "campaign_label",
             "red_flag",
             "red_flag_name",
             "patient_video_url",
@@ -436,48 +602,59 @@ def build_silver(run_id: str) -> dict[str, Any]:
             "district",
             "state",
             "field_rep_id",
+            "field_rep_name",
         ],
         redflag_fact_rows,
     )
 
     metric_fact_rows = []
     for row in metric_rows:
-        doctor_key, doctor_dim = resolve_doctor_key_from_source_id(row.get("doctor_id"), f"metric:{row.get('id')}")
-        filters = _doctor_filters(doctor_dim)
-        classifications = classify_metric_event(row.get("event_type"), row.get("action_key"))
-        metric_fact_rows.append(
-            {
-                "metric_event_id": _empty_text(row.get("id")),
-                "event_type": _empty_text(row.get("event_type")),
-                "action_key": _empty_text(row.get("action_key")),
-                "doctor_key": doctor_key,
-                "patient_id": _empty_text(row.get("patient_id")),
-                "share_code": _empty_text(row.get("share_code")),
-                "form_id": _empty_text(row.get("form_id")),
-                "language_code": _empty_text(row.get("language_code")),
-                "video_url": _empty_text(row.get("video_url")),
-                "meta_raw": _empty_text(row.get("meta")),
-                "ts": _empty_text(iso_datetime(row.get("ts"))),
-                "red_flag_id": _empty_text(row.get("red_flag_id")),
-                "overall_flag_code": _empty_text(row.get("overall_flag_code")),
-                "doctor_display_name": filters["doctor_display_name"],
-                "city": filters["city"],
-                "district": filters["district"],
-                "state": filters["state"],
-                "field_rep_id": filters["field_rep_id"],
-                "is_reminder_sent": "true" if classifications["is_reminder_sent"] else "false",
-                "is_patient_education": "true" if classifications["is_patient_education"] else "false",
-                "is_doctor_education": "true" if classifications["is_doctor_education"] else "false",
-            }
-        )
+        for doctor_key, doctor_dim in resolve_doctor_matches_from_source_id(row.get("doctor_id"), f"metric:{row.get('id')}"):
+            filters = _doctor_filters(doctor_dim)
+            classifications = classify_metric_event(row.get("event_type"), row.get("action_key"))
+            metric_event_id = _empty_text(row.get("id"))
+            if filters["campaign_key"]:
+                metric_event_id = f"{metric_event_id}:campaign:{filters['campaign_key']}"
+            metric_fact_rows.append(
+                {
+                    "metric_event_id": metric_event_id,
+                    "source_metric_event_id": _empty_text(row.get("id")),
+                    "event_type": _empty_text(row.get("event_type")),
+                    "action_key": _empty_text(row.get("action_key")),
+                    "doctor_key": doctor_key,
+                    "campaign_key": filters["campaign_key"],
+                    "campaign_label": filters["campaign_label"],
+                    "patient_id": _empty_text(row.get("patient_id")),
+                    "share_code": _empty_text(row.get("share_code")),
+                    "form_id": _empty_text(row.get("form_id")),
+                    "language_code": _empty_text(row.get("language_code")),
+                    "video_url": _empty_text(row.get("video_url")),
+                    "meta_raw": _empty_text(row.get("meta")),
+                    "ts": _empty_text(iso_datetime(row.get("ts"))),
+                    "red_flag_id": _empty_text(row.get("red_flag_id")),
+                    "overall_flag_code": _empty_text(row.get("overall_flag_code")),
+                    "doctor_display_name": filters["doctor_display_name"],
+                    "city": filters["city"],
+                    "district": filters["district"],
+                    "state": filters["state"],
+                    "field_rep_id": filters["field_rep_id"],
+                    "field_rep_name": filters["field_rep_name"],
+                    "is_reminder_sent": "true" if classifications["is_reminder_sent"] else "false",
+                    "is_patient_education": "true" if classifications["is_patient_education"] else "false",
+                    "is_doctor_education": "true" if classifications["is_doctor_education"] else "false",
+                }
+            )
     replace_table(
         SILVER_SCHEMA,
         "fact_metric_event",
         [
             "metric_event_id",
+            "source_metric_event_id",
             "event_type",
             "action_key",
             "doctor_key",
+            "campaign_key",
+            "campaign_label",
             "patient_id",
             "share_code",
             "form_id",
@@ -492,6 +669,7 @@ def build_silver(run_id: str) -> dict[str, Any]:
             "district",
             "state",
             "field_rep_id",
+            "field_rep_name",
             "is_reminder_sent",
             "is_patient_education",
             "is_doctor_education",
@@ -501,39 +679,49 @@ def build_silver(run_id: str) -> dict[str, Any]:
 
     followup_fact_rows = []
     for row in followup_rows:
-        doctor_key, doctor_dim = resolve_doctor_key_from_source_id(row.get("doctor_id"), f"followup:{row.get('id')}")
-        filters = _doctor_filters(doctor_dim)
-        for item in explode_followup_schedule(row):
-            followup_fact_rows.append(
-                {
-                    "reminder_id": _empty_text(row.get("id")),
-                    "doctor_key": doctor_key,
-                    "patient_id": _empty_text(row.get("patient_id")),
-                    "patient_name": _empty_text(row.get("patient_name")),
-                    "patient_whatsapp": _empty_text(normalize_phone(row.get("patient_whatsapp"))),
-                    "scheduled_followup_date": item["scheduled_followup_date"],
-                    "schedule_sequence": item["schedule_sequence"],
-                    "generation_method": item["generation_method"],
-                    "source_date_field": item["source_date_field"],
-                    "frequency_unit": _empty_text(row.get("frequency_unit")),
-                    "frequency": _empty_text(row.get("frequency")),
-                    "num_followups": _empty_text(row.get("num_followups")),
-                    "first_followup_date": _empty_text(iso_date(row.get("first_followup_date"))),
-                    "created_at": _empty_text(iso_datetime(row.get("created_at"))),
-                    "updated_at": _empty_text(iso_datetime(row.get("updated_at"))),
-                    "doctor_display_name": filters["doctor_display_name"],
-                    "city": filters["city"],
-                    "district": filters["district"],
-                    "state": filters["state"],
-                    "field_rep_id": filters["field_rep_id"],
-                }
-            )
+        for doctor_key, doctor_dim in resolve_doctor_matches_from_source_id(row.get("doctor_id"), f"followup:{row.get('id')}"):
+            filters = _doctor_filters(doctor_dim)
+            reminder_id = _empty_text(row.get("id"))
+            if filters["campaign_key"]:
+                reminder_id = f"{reminder_id}:campaign:{filters['campaign_key']}"
+            for item in explode_followup_schedule(row):
+                followup_fact_rows.append(
+                    {
+                        "reminder_id": reminder_id,
+                        "source_reminder_id": _empty_text(row.get("id")),
+                        "doctor_key": doctor_key,
+                        "campaign_key": filters["campaign_key"],
+                        "campaign_label": filters["campaign_label"],
+                        "patient_id": _empty_text(row.get("patient_id")),
+                        "patient_name": _empty_text(row.get("patient_name")),
+                        "patient_whatsapp": _empty_text(normalize_phone(row.get("patient_whatsapp"))),
+                        "scheduled_followup_date": item["scheduled_followup_date"],
+                        "schedule_sequence": item["schedule_sequence"],
+                        "generation_method": item["generation_method"],
+                        "source_date_field": item["source_date_field"],
+                        "frequency_unit": _empty_text(row.get("frequency_unit")),
+                        "frequency": _empty_text(row.get("frequency")),
+                        "num_followups": _empty_text(row.get("num_followups")),
+                        "first_followup_date": _empty_text(iso_date(row.get("first_followup_date"))),
+                        "created_at": _empty_text(iso_datetime(row.get("created_at"))),
+                        "updated_at": _empty_text(iso_datetime(row.get("updated_at"))),
+                        "doctor_display_name": filters["doctor_display_name"],
+                        "city": filters["city"],
+                        "district": filters["district"],
+                        "state": filters["state"],
+                        "field_rep_id": filters["field_rep_id"],
+                        "field_rep_name": filters["field_rep_name"],
+                    }
+                )
     replace_table(
         SILVER_SCHEMA,
         "fact_followup_schedule_instance",
         [
             "reminder_id",
+            "source_reminder_id",
             "doctor_key",
+            "campaign_key",
+            "campaign_label",
             "patient_id",
             "patient_name",
             "patient_whatsapp",
@@ -552,6 +740,7 @@ def build_silver(run_id: str) -> dict[str, Any]:
             "district",
             "state",
             "field_rep_id",
+            "field_rep_name",
         ],
         followup_fact_rows,
     )
@@ -559,7 +748,10 @@ def build_silver(run_id: str) -> dict[str, Any]:
     reminder_sent_rows = [
         {
             "metric_event_id": row["metric_event_id"],
+            "source_metric_event_id": row["source_metric_event_id"],
             "doctor_key": row["doctor_key"],
+            "campaign_key": row["campaign_key"],
+            "campaign_label": row["campaign_label"],
             "patient_id": row["patient_id"],
             "ts": row["ts"],
             "action_key": row["action_key"],
@@ -568,6 +760,7 @@ def build_silver(run_id: str) -> dict[str, Any]:
             "district": row["district"],
             "state": row["state"],
             "field_rep_id": row["field_rep_id"],
+            "field_rep_name": row["field_rep_name"],
         }
         for row in metric_fact_rows
         if row["is_reminder_sent"] == "true"
@@ -577,7 +770,10 @@ def build_silver(run_id: str) -> dict[str, Any]:
         "fact_reminder_sent",
         [
             "metric_event_id",
+            "source_metric_event_id",
             "doctor_key",
+            "campaign_key",
+            "campaign_label",
             "patient_id",
             "ts",
             "action_key",
@@ -586,6 +782,7 @@ def build_silver(run_id: str) -> dict[str, Any]:
             "district",
             "state",
             "field_rep_id",
+            "field_rep_name",
         ],
         reminder_sent_rows,
     )
@@ -595,42 +792,50 @@ def build_silver(run_id: str) -> dict[str, Any]:
     for row in webinar_rows:
         if title_filter and title_filter not in (_empty_text(row.get("event_title"))).lower():
             continue
-        matched_dim, match_method = _doctor_match_for_api(row, dim_by_email, dim_by_phone)
-        filters = _doctor_filters(matched_dim)
         effective_date = webinar_effective_date(row)
-        registration_key = clean_text(row.get("registration_id")) or hash_fields(
+        base_registration_key = clean_text(row.get("registration_id")) or hash_fields(
             row.get("event_id"),
             row.get("email"),
             normalize_phone(row.get("phone")),
             row.get("start_date"),
         )
-        webinar_fact_rows.append(
-            {
-                "registration_key": registration_key,
-                "event_id": _empty_text(row.get("event_id")),
-                "event_title": _empty_text(row.get("event_title")),
-                "start_date": _empty_text(iso_datetime(row.get("start_date")) or iso_date(row.get("start_date"))),
-                "end_date": _empty_text(iso_datetime(row.get("end_date")) or iso_date(row.get("end_date"))),
-                "timezone": _empty_text(row.get("timezone")),
-                "email": _empty_text(row.get("email")),
-                "first_name": _empty_text(row.get("first_name")),
-                "last_name": _empty_text(row.get("last_name")),
-                "phone": _empty_text(normalize_phone(row.get("phone"))),
-                "registration_effective_date": effective_date.isoformat() if effective_date else "",
-                "doctor_key": _empty_text((matched_dim or {}).get("doctor_key")),
-                "doctor_display_name": filters["doctor_display_name"],
-                "state": filters["state"],
-                "city": filters["city"],
-                "field_rep_id": filters["field_rep_id"],
-                "match_method": match_method,
-                "unmapped_flag": "true" if match_method == "unmapped" else "false",
-            }
-        )
+        for matched_dim, match_method in _doctor_matches_for_api(row, dim_by_email, dim_by_phone):
+            filters = _doctor_filters(matched_dim)
+            registration_key = base_registration_key
+            if filters["campaign_key"]:
+                registration_key = f"{registration_key}:campaign:{filters['campaign_key']}"
+            webinar_fact_rows.append(
+                {
+                    "registration_key": registration_key,
+                    "source_registration_key": base_registration_key,
+                    "event_id": _empty_text(row.get("event_id")),
+                    "event_title": _empty_text(row.get("event_title")),
+                    "start_date": _empty_text(iso_datetime(row.get("start_date")) or iso_date(row.get("start_date"))),
+                    "end_date": _empty_text(iso_datetime(row.get("end_date")) or iso_date(row.get("end_date"))),
+                    "timezone": _empty_text(row.get("timezone")),
+                    "email": _empty_text(row.get("email")),
+                    "first_name": _empty_text(row.get("first_name")),
+                    "last_name": _empty_text(row.get("last_name")),
+                    "phone": _empty_text(normalize_phone(row.get("phone"))),
+                    "registration_effective_date": effective_date.isoformat() if effective_date else "",
+                    "doctor_key": _empty_text((matched_dim or {}).get("doctor_key")),
+                    "campaign_key": filters["campaign_key"],
+                    "campaign_label": filters["campaign_label"],
+                    "doctor_display_name": filters["doctor_display_name"],
+                    "state": filters["state"],
+                    "city": filters["city"],
+                    "field_rep_id": filters["field_rep_id"],
+                    "field_rep_name": filters["field_rep_name"],
+                    "match_method": match_method,
+                    "unmapped_flag": "true" if match_method == "unmapped" else "false",
+                }
+            )
     replace_table(
         SILVER_SCHEMA,
         "fact_webinar_registration",
         [
             "registration_key",
+            "source_registration_key",
             "event_id",
             "event_title",
             "start_date",
@@ -642,10 +847,13 @@ def build_silver(run_id: str) -> dict[str, Any]:
             "phone",
             "registration_effective_date",
             "doctor_key",
+            "campaign_key",
+            "campaign_label",
             "doctor_display_name",
             "state",
             "city",
             "field_rep_id",
+            "field_rep_name",
             "match_method",
             "unmapped_flag",
         ],
@@ -655,36 +863,39 @@ def build_silver(run_id: str) -> dict[str, Any]:
     course_progress_rows = []
     invalid_course_status_counter = Counter()
     for row in course_breakdown_rows:
-        matched_dim, match_method = _doctor_match_for_api(row, dim_by_email, dim_by_phone)
-        filters = _doctor_filters(matched_dim)
         dashboard_status = map_course_status(row.get("progress_status"))
         if dashboard_status is None:
             invalid_course_status_counter[_empty_text(row.get("progress_status"), "BLANK")] += 1
-        course_progress_rows.append(
-            {
-                "extract_snapshot_date": date.today().isoformat(),
-                "course_id": _empty_text(row.get("course_id")),
-                "course_audience": _empty_text(row.get("course_audience")),
-                "user_id": _empty_text(row.get("user_id")),
-                "display_name": _empty_text(row.get("display_name")),
-                "user_email": _empty_text(row.get("user_email")),
-                "first_name": _empty_text(row.get("first_name")),
-                "last_name": _empty_text(row.get("last_name")),
-                "phone": _empty_text(normalize_phone(row.get("phone"))),
-                "progress_status": _empty_text(row.get("progress_status")),
-                "enrolled_at": _empty_text(iso_datetime(row.get("enrolled_at"))),
-                "started_at": _empty_text(iso_datetime(row.get("started_at"))),
-                "completed_at": _empty_text(iso_datetime(row.get("completed_at"))),
-                "dashboard_status": dashboard_status or "",
-                "doctor_key": _empty_text((matched_dim or {}).get("doctor_key")),
-                "doctor_display_name": filters["doctor_display_name"],
-                "state": filters["state"],
-                "city": filters["city"],
-                "field_rep_id": filters["field_rep_id"],
-                "match_method": match_method,
-                "unmapped_flag": "true" if match_method == "unmapped" else "false",
-            }
-        )
+        for matched_dim, match_method in _doctor_matches_for_api(row, dim_by_email, dim_by_phone):
+            filters = _doctor_filters(matched_dim)
+            course_progress_rows.append(
+                {
+                    "extract_snapshot_date": date.today().isoformat(),
+                    "course_id": _empty_text(row.get("course_id")),
+                    "course_audience": _empty_text(row.get("course_audience")),
+                    "user_id": _empty_text(row.get("user_id")),
+                    "display_name": _empty_text(row.get("display_name")),
+                    "user_email": _empty_text(row.get("user_email")),
+                    "first_name": _empty_text(row.get("first_name")),
+                    "last_name": _empty_text(row.get("last_name")),
+                    "phone": _empty_text(normalize_phone(row.get("phone"))),
+                    "progress_status": _empty_text(row.get("progress_status")),
+                    "enrolled_at": _empty_text(iso_datetime(row.get("enrolled_at"))),
+                    "started_at": _empty_text(iso_datetime(row.get("started_at"))),
+                    "completed_at": _empty_text(iso_datetime(row.get("completed_at"))),
+                    "dashboard_status": dashboard_status or "",
+                    "doctor_key": _empty_text((matched_dim or {}).get("doctor_key")),
+                    "campaign_key": filters["campaign_key"],
+                    "campaign_label": filters["campaign_label"],
+                    "doctor_display_name": filters["doctor_display_name"],
+                    "state": filters["state"],
+                    "city": filters["city"],
+                    "field_rep_id": filters["field_rep_id"],
+                    "field_rep_name": filters["field_rep_name"],
+                    "match_method": match_method,
+                    "unmapped_flag": "true" if match_method == "unmapped" else "false",
+                }
+            )
     replace_table(
         SILVER_SCHEMA,
         "fact_course_user_progress",
@@ -704,10 +915,13 @@ def build_silver(run_id: str) -> dict[str, Any]:
             "completed_at",
             "dashboard_status",
             "doctor_key",
+            "campaign_key",
+            "campaign_label",
             "doctor_display_name",
             "state",
             "city",
             "field_rep_id",
+            "field_rep_name",
             "match_method",
             "unmapped_flag",
         ],
@@ -736,6 +950,8 @@ def build_silver(run_id: str) -> dict[str, Any]:
                 {
                     "as_of_date": current_date.isoformat(),
                     "doctor_key": doctor_key,
+                    "campaign_key": doctor["campaign_key"],
+                    "campaign_label": doctor["campaign_label"],
                     "doctor_display_name": doctor["canonical_display_name"],
                     "screenings_last_15d": str(count_last_15d),
                     "is_active": "true" if count_last_15d >= 3 else "false",
@@ -746,6 +962,7 @@ def build_silver(run_id: str) -> dict[str, Any]:
                     "district": doctor["district"],
                     "state": doctor["state"],
                     "field_rep_id": doctor["field_rep_id"],
+                    "field_rep_name": doctor["field_rep_name"],
                 }
             )
         current_date += timedelta(days=1)
@@ -755,6 +972,8 @@ def build_silver(run_id: str) -> dict[str, Any]:
         [
             "as_of_date",
             "doctor_key",
+            "campaign_key",
+            "campaign_label",
             "doctor_display_name",
             "screenings_last_15d",
             "is_active",
@@ -765,6 +984,7 @@ def build_silver(run_id: str) -> dict[str, Any]:
             "district",
             "state",
             "field_rep_id",
+            "field_rep_name",
         ],
         doctor_status_rows,
     )
@@ -793,7 +1013,10 @@ def build_silver(run_id: str) -> dict[str, Any]:
         video_rows.append(
             {
                 "metric_event_id": row["metric_event_id"],
+                "source_metric_event_id": row["source_metric_event_id"],
                 "doctor_key": row["doctor_key"],
+                "campaign_key": row["campaign_key"],
+                "campaign_label": row["campaign_label"],
                 "patient_id": row["patient_id"],
                 "audience": audience,
                 "content_identifier": content_identifier,
@@ -806,6 +1029,7 @@ def build_silver(run_id: str) -> dict[str, Any]:
                 "district": row["district"],
                 "state": row["state"],
                 "field_rep_id": row["field_rep_id"],
+                "field_rep_name": row["field_rep_name"],
             }
         )
     replace_table(
@@ -813,7 +1037,10 @@ def build_silver(run_id: str) -> dict[str, Any]:
         "fact_video_view",
         [
             "metric_event_id",
+            "source_metric_event_id",
             "doctor_key",
+            "campaign_key",
+            "campaign_label",
             "patient_id",
             "audience",
             "content_identifier",
@@ -826,6 +1053,7 @@ def build_silver(run_id: str) -> dict[str, Any]:
             "district",
             "state",
             "field_rep_id",
+            "field_rep_name",
         ],
         video_rows,
     )
@@ -875,6 +1103,8 @@ def build_silver(run_id: str) -> dict[str, Any]:
         if existing is None or enrolled_at < existing.get("certification_date", ""):
             doctor_course_enrollments[doctor_key] = {
                 "doctor_key": doctor_key,
+                "campaign_key": row.get("campaign_key", ""),
+                "campaign_label": row.get("campaign_label", ""),
                 "certification_status": "enrolled",
                 "certification_date": enrolled_at,
                 "certification_source": "doctor_course_enrollment",
@@ -887,6 +1117,8 @@ def build_silver(run_id: str) -> dict[str, Any]:
         "certification_status_prepared",
         [
             "doctor_key",
+            "campaign_key",
+            "campaign_label",
             "certification_status",
             "certification_date",
             "certification_source",

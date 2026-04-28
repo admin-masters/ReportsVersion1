@@ -9,6 +9,7 @@ The SAPA dashboard must not fetch application data from CSV files at runtime.
 Runtime inputs are:
 
 - MySQL source tables from the SAPA application/source MySQL database
+- RFA campaign tables from the same MySQL source, including `campaign_campaign`, `campaign_doctorcampaignenrollment`, `campaign_fieldrep`, and `campaign_campaignfieldrep`
 - PostgreSQL reporting tables in SAPA-specific schemas
 - WordPress/LearnDash API for webinar and course data when the SAPA ETL is run against live upstreams
 
@@ -20,6 +21,8 @@ The SAPA dashboard is isolated from the legacy Inclinic report by schema and rou
 
 - Legacy report routes remain under `/` and `/campaign/...`
 - SAPA routes remain under `/sapa-growth/`
+- `/sapa-growth/` is the SAPA campaign launcher
+- SAPA campaign dashboards use `/sapa-growth/campaign/<campaign_key>/`
 - Legacy reporting tables remain in their existing schemas
 - SAPA reporting tables remain in:
   - `raw_sapa_mysql`
@@ -42,6 +45,14 @@ If those variables are absent, SAPA falls back in this order:
 - `MYSQL_SERVER2_*`
 
 This keeps SAPA pointed at `healthcare_forms_2` by default while preserving an explicit SAPA override path when a deployment needs something different.
+
+The SAPA/RFA campaign separation is built from live MySQL source tables, not from CSVs or manually seeded data:
+
+- `campaign_campaign` supplies the campaign id/name and is filtered to `system_rfa` campaigns when that flag is available.
+- `campaign_doctorcampaignenrollment` maps source doctors to campaigns.
+- `campaign_fieldrep` supplies field-rep identity, names, external ids, and state.
+- `campaign_campaignfieldrep` maps field reps to campaigns for redflags-side doctor records where direct campaign enrollment is unavailable.
+- Screening, reminder, follow-up, video, webinar, and course facts inherit the campaign-specific doctor key so dashboard tiles, drill-downs, CSV exports, and PDF exports remain filter-consistent.
 
 SAPA WordPress extraction first uses explicit `SAPA_WORDPRESS_*` variables.
 

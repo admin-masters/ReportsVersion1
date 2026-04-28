@@ -436,8 +436,8 @@ def reports_home(request: HttpRequest) -> HttpResponse:
         },
         {
             "label": "SAPA Growth Clinic",
-            "description": "Program launcher with separate secure login and access email management for the SAPA dashboard.",
-            "href": "/sapa-growth/menu/",
+            "description": "Campaign launcher with separate secure login, access email management, and RFA campaign dashboards.",
+            "href": "/sapa-growth/",
         },
         {
             "label": "Campaign Performance Links",
