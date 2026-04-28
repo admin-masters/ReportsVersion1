@@ -232,7 +232,7 @@ class PeReportsRoutingTests(SimpleTestCase):
 
     def test_existing_inclinic_and_sapa_routes_still_resolve(self):
         self.assertEqual(resolve("/campaign/demo/login/").view_name, "campaign-login")
-        self.assertEqual(resolve("/sapa-growth/").view_name, "sapa_growth:dashboard")
+        self.assertEqual(resolve("/sapa-growth/").view_name, "sapa_growth:menu")
 
 
 class PeReportsViewTests(SimpleTestCase):
